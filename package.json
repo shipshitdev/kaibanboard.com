@@ -1,7 +1,4 @@
 {
-  "activationEvents": [
-    "onCommand:kaiban.showBoard"
-  ],
   "categories": [
     "Other"
   ],
@@ -48,11 +45,14 @@
   },
   "scripts": {
     "compile": "tsc -p ./",
-    "package": "pnpm run compile && vsce package --no-dependencies",
+    "package": "pnpm run compile && mkdir -p build && vsce package --no-dependencies --out build/",
     "pre:install": "pnpm up --latest --recursive && pnpm i",
     "pretest": "pnpm run compile",
+    "version:major": "pnpm version major --no-git-tag-version",
+    "version:minor": "pnpm version minor --no-git-tag-version",
+    "version:patch": "pnpm version patch --no-git-tag-version",
     "vscode:prepublish": "pnpm run compile",
     "watch": "tsc -watch -p ./"
   },
-  "version": "0.1.0"
+  "version": "0.1.1"
 }

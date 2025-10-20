@@ -240,7 +240,13 @@ export class KanbanViewProvider {
       font-weight: 600;
     }
 
-    .refresh-btn {
+    .header-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .action-btn {
       background: var(--vscode-button-background);
       color: var(--vscode-button-foreground);
       border: none;
@@ -250,8 +256,17 @@ export class KanbanViewProvider {
       font-size: 14px;
     }
 
-    .refresh-btn:hover {
+    .action-btn:hover {
       background: var(--vscode-button-hoverBackground);
+    }
+
+    .secondary-btn {
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+    }
+
+    .secondary-btn:hover {
+      background: var(--vscode-button-secondaryHoverBackground);
     }
 
     .board {
@@ -505,7 +520,12 @@ export class KanbanViewProvider {
 <body>
     <div class="header">
       <div class="title">Kaiban Markdown</div>
-      <button class="refresh-btn" onclick="refresh()">Refresh</button>
+      <div class="header-actions">
+        <button class="action-btn secondary-btn" onclick="toggleSort()" id="sortBtn">
+          Sort: Priority
+        </button>
+        <button class="action-btn" onclick="refresh()">Refresh</button>
+      </div>
     </div>
 
   <div class="board" id="kanbanBoard">
@@ -579,9 +599,31 @@ export class KanbanViewProvider {
   <script>
     const vscode = acquireVsCodeApi();
     let draggedElement = null;
+    let sortByPriority = true;
 
     // Click handler for task cards
     document.addEventListener('click', (e) => {
+      // Check if clicking on a link within PRD content first
+      const link = e.target.closest('a');
+      if (link && link.closest('#prdContent')) {
+        e.preventDefault();
+        e.stopPropagation();
+        const href = link.getAttribute('href');
+        
+        // Check if it's a relative path (not http/https/mailto)
+        if (href && !href.match(/^(https?:|mailto:|#)/)) {
+          // Load this file in the PRD preview
+          vscode.postMessage({
+            command: 'loadPRD',
+            prdPath: href
+          });
+        } else if (href && href.match(/^https?:/)) {
+          // External links should open in browser
+          return true;
+        }
+        return false;
+      }
+
       const card = e.target.closest('.task-card');
       if (card) {
         const filePath = card.dataset.filepath;
@@ -704,30 +746,57 @@ export class KanbanViewProvider {
       vscode.postMessage({ command: 'refresh' });
     }
 
+    // Toggle sort handler
+    function toggleSort() {
+      sortByPriority = !sortByPriority;
+      const sortBtn = document.getElementById('sortBtn');
+      
+      if (sortByPriority) {
+        sortBtn.textContent = 'Sort: Priority';
+        sortTasksByPriority();
+      } else {
+        sortBtn.textContent = 'Sort: Default';
+        sortTasksByDefault();
+      }
+    }
+
+    function sortTasksByPriority() {
+      const columns = document.querySelectorAll('.column');
+      const priorityOrder = { high: 0, medium: 1, low: 2 };
+      
+      columns.forEach(column => {
+        const content = column.querySelector('.column-content');
+        const tasks = Array.from(content.querySelectorAll('.task-card'));
+        const emptyState = content.querySelector('.empty-state');
+        
+        if (tasks.length === 0) return;
+        
+        tasks.sort((a, b) => {
+          const aPriority = a.classList.contains('high') ? 'high' : 
+                          a.classList.contains('medium') ? 'medium' : 'low';
+          const bPriority = b.classList.contains('high') ? 'high' : 
+                          b.classList.contains('medium') ? 'medium' : 'low';
+          return priorityOrder[aPriority] - priorityOrder[bPriority];
+        });
+        
+        // Clear and re-append
+        content.innerHTML = '';
+        tasks.forEach(task => content.appendChild(task));
+        if (emptyState) content.appendChild(emptyState);
+      });
+    }
+
+    function sortTasksByDefault() {
+      // Refresh to get original order
+      refresh();
+    }
+
     // Handle PRD content updates
     window.addEventListener('message', event => {
       const message = event.data;
       if (message.command === 'updatePRDContent') {
         const content = document.getElementById('prdContent');
         content.innerHTML = \`<div class="prd-markdown">\${message.content}</div>\`;
-      }
-    });
-
-    // Handle clicks on links within PRD content
-    document.addEventListener('click', (e) => {
-      const link = e.target.closest('a');
-      if (link && link.closest('#prdContent')) {
-        const href = link.getAttribute('href');
-        
-        // Check if it's a relative path (not http/https/mailto)
-        if (href && !href.match(/^(https?:|mailto:|#)/)) {
-          e.preventDefault();
-          // Load this file in the PRD preview
-          vscode.postMessage({
-            command: 'loadPRD',
-            prdPath: href
-          });
-        }
       }
     });
   </script>
