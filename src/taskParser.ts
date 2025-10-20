@@ -215,10 +215,41 @@ export class TaskParser {
 **PRD:** [Link](${task.prdPath})
 
 ---
-
-## Additional Notes
 `;
 
     fs.writeFileSync(task.filePath, content, "utf-8");
+  }
+
+  /**
+   * Update task status by ID
+   */
+  public async updateTaskStatus(
+    taskId: string,
+    newStatus: "Backlog" | "To Do" | "Testing" | "Done"
+  ): Promise<void> {
+    const tasks = await this.parseTasks();
+    const task = tasks.find((t) => t.id === taskId);
+
+    if (!task) {
+      throw new Error(`Task with ID ${taskId} not found`);
+    }
+
+    // Read the file content
+    const content = fs.readFileSync(task.filePath, "utf-8");
+    const lines = content.split("\n");
+
+    // Update status and timestamp
+    const now = new Date().toISOString();
+    const updatedLines = lines.map((line) => {
+      if (line.startsWith("**Status:**")) {
+        return `**Status:** ${newStatus}`;
+      } else if (line.startsWith("**Updated:**")) {
+        return `**Updated:** ${now}`;
+      }
+      return line;
+    });
+
+    // Write back to file
+    fs.writeFileSync(task.filePath, updatedLines.join("\n"), "utf-8");
   }
 }

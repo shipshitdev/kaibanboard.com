@@ -43,6 +43,9 @@ export class KanbanViewProvider {
           case "loadPRD":
             await this.loadPRDContent(message.prdPath);
             break;
+          case "updateTaskStatus":
+            await this.updateTaskStatus(message.taskId, message.newStatus);
+            break;
         }
       },
       undefined,
@@ -121,6 +124,19 @@ export class KanbanViewProvider {
     }
   }
 
+  private async updateTaskStatus(taskId: string, newStatus: string) {
+    try {
+      await this.taskParser.updateTaskStatus(
+        taskId,
+        newStatus as "Backlog" | "To Do" | "Testing" | "Done"
+      );
+      // Refresh the board after updating
+      await this.refresh();
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to update task status: ${error}`);
+    }
+  }
+
   private renderMarkdown(content: string): string {
     // Simple markdown rendering - convert basic elements
     let html = content
@@ -149,19 +165,30 @@ export class KanbanViewProvider {
   }
 
   private getWebviewContent(groupedTasks: Record<string, Task[]>): string {
-    const backlogTasks = groupedTasks["Backlog"] || [];
-    const todoTasks = groupedTasks["To Do"] || [];
-    const testingTasks = groupedTasks["Testing"] || [];
-    const doneTasks = groupedTasks["Done"] || [];
+    // Sort function: High > Medium > Low
+    const sortByPriority = (tasks: Task[]) => {
+      const priorityOrder = { High: 0, Medium: 1, Low: 2 };
+      return tasks.sort(
+        (a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]
+      );
+    };
+
+    const backlogTasks = sortByPriority(groupedTasks["Backlog"] || []);
+    const todoTasks = sortByPriority(groupedTasks["To Do"] || []);
+    const testingTasks = sortByPriority(groupedTasks["Testing"] || []);
+    const doneTasks = sortByPriority(groupedTasks["Done"] || []);
 
     const renderTask = (task: Task) => {
       const priorityClass = task.priority.toLowerCase();
       const completedClass = task.completed ? "completed" : "";
 
       return `
-        <div class="task-card ${priorityClass} ${completedClass}" data-filepath="${
-        task.filePath
-      }" data-task-id="${task.id}" data-prd-path="${task.prdPath}">
+        <div class="task-card ${priorityClass} ${completedClass}" 
+             draggable="true" 
+             data-filepath="${task.filePath}" 
+             data-task-id="${task.id}" 
+             data-prd-path="${task.prdPath}"
+             data-status="${task.status}">
           <div class="task-header">
             <span class="task-title">${this.escapeHtml(task.label)}</span>
             ${task.completed ? '<span class="task-check">[Done]</span>' : ""}
@@ -296,6 +323,16 @@ export class KanbanViewProvider {
 
     .task-card.completed {
       opacity: 0.7;
+    }
+
+    .task-card.dragging {
+      opacity: 0.5;
+      cursor: move;
+    }
+
+    .column.drag-over {
+      background: var(--vscode-list-hoverBackground);
+      border: 2px dashed var(--vscode-focusBorder);
     }
 
     .task-header {
@@ -472,7 +509,7 @@ export class KanbanViewProvider {
     </div>
 
   <div class="board" id="kanbanBoard">
-    <div class="column">
+    <div class="column" data-status="Backlog">
       <div class="column-header">
         <span>Backlog</span>
         <span class="column-count">${backlogTasks.length}</span>
@@ -486,7 +523,7 @@ export class KanbanViewProvider {
       </div>
     </div>
 
-    <div class="column">
+    <div class="column" data-status="To Do">
       <div class="column-header">
         <span>To Do</span>
         <span class="column-count">${todoTasks.length}</span>
@@ -500,7 +537,7 @@ export class KanbanViewProvider {
       </div>
     </div>
 
-    <div class="column">
+    <div class="column" data-status="Testing">
       <div class="column-header">
         <span>Testing</span>
         <span class="column-count">${testingTasks.length}</span>
@@ -514,7 +551,7 @@ export class KanbanViewProvider {
       </div>
     </div>
 
-    <div class="column">
+    <div class="column" data-status="Done">
       <div class="column-header">
         <span>Done</span>
         <span class="column-count">${doneTasks.length}</span>
@@ -541,6 +578,7 @@ export class KanbanViewProvider {
 
   <script>
     const vscode = acquireVsCodeApi();
+    let draggedElement = null;
 
     // Click handler for task cards
     document.addEventListener('click', (e) => {
@@ -565,6 +603,61 @@ export class KanbanViewProvider {
           command: 'openTask',
           filePath: filePath
         });
+      }
+    });
+
+    // Drag and drop handlers
+    document.addEventListener('dragstart', (e) => {
+      const card = e.target.closest('.task-card');
+      if (card) {
+        draggedElement = card;
+        card.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/html', card.innerHTML);
+      }
+    });
+
+    document.addEventListener('dragend', (e) => {
+      const card = e.target.closest('.task-card');
+      if (card) {
+        card.classList.remove('dragging');
+        draggedElement = null;
+      }
+      // Remove drag-over class from all columns
+      document.querySelectorAll('.column').forEach(col => col.classList.remove('drag-over'));
+    });
+
+    document.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      const column = e.target.closest('.column');
+      if (column && draggedElement) {
+        e.dataTransfer.dropEffect = 'move';
+        // Add visual feedback
+        document.querySelectorAll('.column').forEach(col => col.classList.remove('drag-over'));
+        column.classList.add('drag-over');
+      }
+    });
+
+    document.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const column = e.target.closest('.column');
+      
+      if (column && draggedElement) {
+        const newStatus = column.dataset.status;
+        const taskId = draggedElement.dataset.taskId;
+        const currentStatus = draggedElement.dataset.status;
+        
+        // Only update if status changed
+        if (newStatus !== currentStatus) {
+          vscode.postMessage({
+            command: 'updateTaskStatus',
+            taskId: taskId,
+            newStatus: newStatus
+          });
+        }
+        
+        // Remove drag-over class
+        column.classList.remove('drag-over');
       }
     });
 
@@ -617,6 +710,24 @@ export class KanbanViewProvider {
       if (message.command === 'updatePRDContent') {
         const content = document.getElementById('prdContent');
         content.innerHTML = \`<div class="prd-markdown">\${message.content}</div>\`;
+      }
+    });
+
+    // Handle clicks on links within PRD content
+    document.addEventListener('click', (e) => {
+      const link = e.target.closest('a');
+      if (link && link.closest('#prdContent')) {
+        const href = link.getAttribute('href');
+        
+        // Check if it's a relative path (not http/https/mailto)
+        if (href && !href.match(/^(https?:|mailto:|#)/)) {
+          e.preventDefault();
+          // Load this file in the PRD preview
+          vscode.postMessage({
+            command: 'loadPRD',
+            prdPath: href
+          });
+        }
       }
     });
   </script>
