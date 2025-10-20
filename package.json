@@ -31,13 +31,13 @@
   "description": "AI-powered Kanban board for markdown tasks from .agent/TASKS/",
   "devDependencies": {
     "@types/node": "24.8.1",
-    "@types/vscode": "1.105.0",
+    "@types/vscode": "1.99.0",
     "@vscode/vsce": "3.6.2",
     "typescript": "5.9.3"
   },
   "displayName": "Kaiban Markdown",
   "engines": {
-    "vscode": "1.80.0"
+    "vscode": "^1.99.0"
   },
   "main": "./out/extension.js",
   "name": "kaiban-md",
