@@ -1,0 +1,58 @@
+{
+  "activationEvents": [
+    "onCommand:kaiban.showBoard"
+  ],
+  "categories": [
+    "Other"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "kaiban.showBoard",
+        "icon": "$(kanban)",
+        "title": "Kaiban: Show Markdown Board"
+      },
+      {
+        "command": "kaiban.refreshBoard",
+        "icon": "$(refresh)",
+        "title": "Kaiban: Refresh Board"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "icon": "$(checklist)",
+          "id": "kaiban-markdown",
+          "title": "Kaiban Markdown"
+        }
+      ]
+    }
+  },
+  "description": "AI-powered Kanban board for markdown tasks from .agent/TASKS/",
+  "devDependencies": {
+    "@types/node": "24.8.1",
+    "@types/vscode": "1.105.0",
+    "@vscode/vsce": "3.6.2",
+    "typescript": "5.9.3"
+  },
+  "displayName": "Kaiban Markdown",
+  "engines": {
+    "vscode": "1.80.0"
+  },
+  "main": "./out/extension.js",
+  "name": "kaiban-md",
+  "publisher": "kaiban-md",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kaiban-md/kaiban-md"
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "package": "pnpm run compile && vsce package --no-dependencies",
+    "pre:install": "pnpm up --latest --recursive && pnpm i",
+    "pretest": "pnpm run compile",
+    "vscode:prepublish": "pnpm run compile",
+    "watch": "tsc -watch -p ./"
+  },
+  "version": "0.1.0"
+}
