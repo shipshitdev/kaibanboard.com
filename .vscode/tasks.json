@@ -3,8 +3,8 @@
   "tasks": [
     {
       "type": "shell",
-      "label": "pnpm: compile",
-      "command": "pnpm run compile",
+      "label": "bun: compile",
+      "command": "bun run compile",
       "group": "build",
       "presentation": {
         "reveal": "silent"
@@ -13,8 +13,8 @@
     },
     {
       "type": "shell",
-      "label": "pnpm: watch",
-      "command": "pnpm run watch",
+      "label": "bun: watch",
+      "command": "bun run watch",
       "isBackground": true,
       "group": {
         "kind": "build",

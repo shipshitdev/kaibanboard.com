@@ -9,29 +9,23 @@ export function activate(context: vscode.ExtensionContext) {
   kanbanView = new KanbanViewProvider(context);
 
   // Register command to show board
-  const showBoardCommand = vscode.commands.registerCommand(
-    "kaiban.showBoard",
-    async () => {
-      try {
-        await kanbanView.show();
-      } catch (error) {
-        vscode.window.showErrorMessage(`Failed to show Kaiban board: ${error}`);
-      }
+  const showBoardCommand = vscode.commands.registerCommand("kaiban.showBoard", async () => {
+    try {
+      await kanbanView.show();
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to show Kaiban board: ${error}`);
     }
-  );
+  });
 
   // Register command to refresh board
-  const refreshBoardCommand = vscode.commands.registerCommand(
-    "kaiban.refreshBoard",
-    async () => {
-      try {
-        await kanbanView.refresh();
-        vscode.window.showInformationMessage("Kaiban board refreshed");
-      } catch (error) {
-        vscode.window.showErrorMessage(`Failed to refresh board: ${error}`);
-      }
+  const refreshBoardCommand = vscode.commands.registerCommand("kaiban.refreshBoard", async () => {
+    try {
+      await kanbanView.refresh();
+      vscode.window.showInformationMessage("Kaiban board refreshed");
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to refresh board: ${error}`);
     }
-  );
+  });
 
   context.subscriptions.push(showBoardCommand, refreshBoardCommand);
 

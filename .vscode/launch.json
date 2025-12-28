@@ -10,7 +10,7 @@
         "${workspaceFolder}/.."
       ],
       "outFiles": ["${workspaceFolder}/out/**/*.js"],
-      "preLaunchTask": "pnpm: compile",
+      "preLaunchTask": "bun: compile",
       "console": "integratedTerminal"
     }
   ]

@@ -1,5 +1,5 @@
-import * as fs from "fs";
-import * as path from "path";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import * as vscode from "vscode";
 
 export interface Task {
@@ -15,6 +15,12 @@ export interface Task {
   filePath: string;
   completed: boolean;
   project: string;
+  // Agent metadata for AI loop
+  claimedBy: string;
+  claimedAt: string;
+  completedAt: string;
+  rejectionCount: number;
+  agentNotes: string;
 }
 
 export class TaskParser {
@@ -22,11 +28,7 @@ export class TaskParser {
    * Parse a structured task file
    * Format: ## Task: Title with metadata sections
    */
-  private parseStructuredTask(
-    content: string,
-    filePath: string,
-    projectName: string
-  ): Task | null {
+  private parseStructuredTask(content: string, filePath: string, projectName: string): Task | null {
     const lines = content.split("\n");
 
     // Extract task title from first line
@@ -38,7 +40,7 @@ export class TaskParser {
     const label = titleMatch[1].trim();
 
     // Parse metadata fields
-    const metadata: Record<string, string> = {};
+    const metadata: Record<string, string | number> = {};
     let inMetadataSection = false;
 
     for (const line of lines) {
@@ -70,6 +72,31 @@ export class TaskParser {
       } else if (line.startsWith("**PRD:**")) {
         const match = line.match(/^\*\*PRD:\*\*\s*\[Link\]\((.+)\)$/);
         if (match) metadata.prd = match[1].trim();
+      } else if (line.startsWith("**Claimed-By:**")) {
+        const match = line.match(/^\*\*Claimed-By:\*\*\s*(.*)$/);
+        if (match) metadata.claimedBy = match[1].trim();
+      } else if (line.startsWith("**Claimed-At:**")) {
+        const match = line.match(/^\*\*Claimed-At:\*\*\s*(.*)$/);
+        if (match) metadata.claimedAt = match[1].trim();
+      } else if (line.startsWith("**Completed-At:**")) {
+        const match = line.match(/^\*\*Completed-At:\*\*\s*(.*)$/);
+        if (match) metadata.completedAt = match[1].trim();
+      } else if (line.startsWith("**Rejection-Count:**")) {
+        const match = line.match(/^\*\*Rejection-Count:\*\*\s*(\d+)$/);
+        if (match) metadata.rejectionCount = parseInt(match[1], 10);
+      } else if (line.startsWith("**Agent-Notes:**")) {
+        // Capture multi-line agent notes (until next section)
+        const noteLines: string[] = [];
+        let noteIdx = lines.indexOf(line) + 1;
+        while (
+          noteIdx < lines.length &&
+          !lines[noteIdx].startsWith("**") &&
+          !lines[noteIdx].startsWith("---")
+        ) {
+          if (lines[noteIdx].trim()) noteLines.push(lines[noteIdx]);
+          noteIdx++;
+        }
+        metadata.agentNotes = noteLines.join("\n");
       } else if (line.startsWith("---") && inMetadataSection) {
         break;
       }
@@ -79,27 +106,31 @@ export class TaskParser {
     const completed = metadata.status === "Done";
 
     return {
-      id: metadata.id || "",
-      label: metadata.label || label,
-      description: metadata.description || "",
-      type: metadata.type || "Task",
-      status: (metadata.status as any) || "Backlog",
-      priority: (metadata.priority as any) || "Medium",
-      created: metadata.created || "",
-      updated: metadata.updated || "",
-      prdPath: metadata.prd || "",
+      id: String(metadata.id || ""),
+      label: String(metadata.label || label),
+      description: String(metadata.description || ""),
+      type: String(metadata.type || "Task"),
+      status: (metadata.status as Task["status"]) || "Backlog",
+      priority: (metadata.priority as Task["priority"]) || "Medium",
+      created: String(metadata.created || ""),
+      updated: String(metadata.updated || ""),
+      prdPath: String(metadata.prd || ""),
       filePath,
       completed,
       project: projectName,
+      // Agent metadata
+      claimedBy: String(metadata.claimedBy || ""),
+      claimedAt: String(metadata.claimedAt || ""),
+      completedAt: String(metadata.completedAt || ""),
+      rejectionCount: (metadata.rejectionCount as number) || 0,
+      agentNotes: String(metadata.agentNotes || ""),
     };
   }
 
   /**
    * Find all .agent/TASKS/*.md files in workspace folders (recursively)
    */
-  private async findTaskFiles(): Promise<
-    Array<{ path: string; project: string }>
-  > {
+  private async findTaskFiles(): Promise<Array<{ path: string; project: string }>> {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders) {
       return [];
@@ -141,11 +172,7 @@ export class TaskParser {
       if (item.isDirectory()) {
         // Recursively scan subdirectories
         this.scanDirectoryRecursive(fullPath, projectName, taskFiles);
-      } else if (
-        item.isFile() &&
-        item.name.endsWith(".md") &&
-        item.name !== "README.md"
-      ) {
+      } else if (item.isFile() && item.name.endsWith(".md") && item.name !== "README.md") {
         taskFiles.push({
           path: fullPath,
           project: projectName,
@@ -245,6 +272,50 @@ export class TaskParser {
         return `**Status:** ${newStatus}`;
       } else if (line.startsWith("**Updated:**")) {
         return `**Updated:** ${now}`;
+      }
+      return line;
+    });
+
+    // Write back to file
+    fs.writeFileSync(task.filePath, updatedLines.join("\n"), "utf-8");
+  }
+
+  /**
+   * Reject a task - move back to To Do with rejection note
+   */
+  public async rejectTask(taskId: string, note: string): Promise<void> {
+    const tasks = await this.parseTasks();
+    const task = tasks.find((t) => t.id === taskId);
+
+    if (!task) {
+      throw new Error(`Task with ID ${taskId} not found`);
+    }
+
+    // Read the file content
+    const content = fs.readFileSync(task.filePath, "utf-8");
+    const lines = content.split("\n");
+
+    // Update status, timestamp, rejection count, and add rejection note
+    const now = new Date().toISOString();
+    const newRejectionCount = task.rejectionCount + 1;
+    let rejectionAdded = false;
+
+    const updatedLines = lines.map((line, _idx) => {
+      if (line.startsWith("**Status:**")) {
+        return "**Status:** To Do";
+      } else if (line.startsWith("**Updated:**")) {
+        return `**Updated:** ${now}`;
+      } else if (line.startsWith("**Claimed-By:**")) {
+        return "**Claimed-By:**";
+      } else if (line.startsWith("**Claimed-At:**")) {
+        return "**Claimed-At:**";
+      } else if (line.startsWith("**Completed-At:**")) {
+        return "**Completed-At:**";
+      } else if (line.startsWith("**Rejection-Count:**")) {
+        return `**Rejection-Count:** ${newRejectionCount}`;
+      } else if (line.startsWith("**Rejections:**") && !rejectionAdded) {
+        rejectionAdded = true;
+        return `**Rejections:**\n- ${now.split("T")[0]}: ${note}`;
       }
       return line;
     });

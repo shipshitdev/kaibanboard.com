@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { Task, TaskParser } from "./taskParser";
+import { type Task, TaskParser } from "./taskParser";
 
 export class KanbanViewProvider {
   private panel: vscode.WebviewPanel | undefined;
@@ -45,6 +45,9 @@ export class KanbanViewProvider {
             break;
           case "updateTaskStatus":
             await this.updateTaskStatus(message.taskId, message.newStatus);
+            break;
+          case "rejectTask":
+            await this.rejectTask(message.taskId, message.note);
             break;
         }
       },
@@ -97,10 +100,7 @@ export class KanbanViewProvider {
           const document = await vscode.workspace.openTextDocument(prdUri);
           prdContent = document.getText();
           break;
-        } catch (error) {
-          // Continue to next folder
-          continue;
-        }
+        } catch (_error) {}
       }
 
       if (prdContent) {
@@ -137,6 +137,17 @@ export class KanbanViewProvider {
     }
   }
 
+  private async rejectTask(taskId: string, note: string) {
+    try {
+      await this.taskParser.rejectTask(taskId, note);
+      // Refresh the board after rejecting
+      await this.refresh();
+      vscode.window.showInformationMessage(`Task rejected and moved back to To Do`);
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to reject task: ${error}`);
+    }
+  }
+
   private renderMarkdown(content: string): string {
     // Simple markdown rendering - convert basic elements
     let html = content
@@ -168,25 +179,26 @@ export class KanbanViewProvider {
     // Sort function: High > Medium > Low
     const sortByPriority = (tasks: Task[]) => {
       const priorityOrder = { High: 0, Medium: 1, Low: 2 };
-      return tasks.sort(
-        (a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]
-      );
+      return tasks.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
     };
 
-    const backlogTasks = sortByPriority(groupedTasks["Backlog"] || []);
+    const backlogTasks = sortByPriority(groupedTasks.Backlog || []);
     const todoTasks = sortByPriority(groupedTasks["To Do"] || []);
-    const testingTasks = sortByPriority(groupedTasks["Testing"] || []);
-    const doneTasks = sortByPriority(groupedTasks["Done"] || []);
+    const testingTasks = sortByPriority(groupedTasks.Testing || []);
+    const doneTasks = sortByPriority(groupedTasks.Done || []);
 
     const renderTask = (task: Task) => {
       const priorityClass = task.priority.toLowerCase();
       const completedClass = task.completed ? "completed" : "";
+      const isInTesting = task.status === "Testing";
+      const hasAgent = task.claimedBy && task.claimedBy.length > 0;
+      const agentPlatform = hasAgent ? task.claimedBy.split("-")[0] : "";
 
       return `
-        <div class="task-card ${priorityClass} ${completedClass}" 
-             draggable="true" 
-             data-filepath="${task.filePath}" 
-             data-task-id="${task.id}" 
+        <div class="task-card ${priorityClass} ${completedClass}"
+             draggable="true"
+             data-filepath="${task.filePath}"
+             data-task-id="${task.id}"
              data-prd-path="${task.prdPath}"
              data-status="${task.status}">
           <div class="task-header">
@@ -194,13 +206,14 @@ export class KanbanViewProvider {
             ${task.completed ? '<span class="task-check">[Done]</span>' : ""}
           </div>
           <div class="task-meta">
-            <span class="badge priority-${priorityClass}">${
-        task.priority
-      }</span>
+            <span class="badge priority-${priorityClass}">${task.priority}</span>
             <span class="badge type">${task.type}</span>
+            ${hasAgent ? `<span class="badge agent-badge">🤖 ${agentPlatform}</span>` : ""}
+            ${task.rejectionCount > 0 ? `<span class="badge rejection-badge">↩ ${task.rejectionCount}</span>` : ""}
           </div>
           <div class="task-footer">
             <span class="project-name">${this.escapeHtml(task.project)}</span>
+            ${isInTesting ? `<button class="reject-btn" onclick="showRejectModal('${task.id}')" title="Reject and return to To Do">Reject</button>` : ""}
           </div>
         </div>
       `;
@@ -404,14 +417,108 @@ export class KanbanViewProvider {
       color: var(--vscode-badge-foreground);
     }
 
+    .agent-badge {
+      background: rgba(33, 150, 243, 0.2);
+      color: #2196f3;
+    }
+
+    .rejection-badge {
+      background: rgba(244, 67, 54, 0.2);
+      color: #f44336;
+    }
+
     .task-footer {
       font-size: 11px;
       color: var(--vscode-descriptionForeground);
       margin-top: 6px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
     }
 
     .project-name {
       opacity: 0.8;
+    }
+
+    .reject-btn {
+      background: rgba(244, 67, 54, 0.2);
+      color: #f44336;
+      border: 1px solid #f44336;
+      padding: 2px 8px;
+      border-radius: 3px;
+      font-size: 10px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .reject-btn:hover {
+      background: #f44336;
+      color: white;
+    }
+
+    /* Reject Modal */
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+
+    .modal {
+      background: var(--vscode-editor-background);
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 8px;
+      padding: 20px;
+      width: 400px;
+      max-width: 90%;
+    }
+
+    .modal h3 {
+      margin: 0 0 15px 0;
+      color: var(--vscode-foreground);
+    }
+
+    .modal textarea {
+      width: 100%;
+      min-height: 80px;
+      padding: 8px;
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 4px;
+      background: var(--vscode-input-background);
+      color: var(--vscode-input-foreground);
+      font-family: var(--vscode-font-family);
+      resize: vertical;
+    }
+
+    .modal-actions {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+      margin-top: 15px;
+    }
+
+    .modal-btn {
+      padding: 8px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      border: none;
+    }
+
+    .modal-btn-cancel {
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+    }
+
+    .modal-btn-reject {
+      background: #f44336;
+      color: white;
     }
 
     .empty-state {
@@ -596,10 +703,62 @@ export class KanbanViewProvider {
     </div>
   </div>
 
+  <!-- Reject Modal -->
+  <div class="modal-overlay" id="rejectModal" style="display: none;">
+    <div class="modal">
+      <h3>Reject Task</h3>
+      <p style="margin-bottom: 10px; color: var(--vscode-descriptionForeground);">
+        Provide feedback for the agent. The task will return to To Do.
+      </p>
+      <textarea id="rejectNote" placeholder="What needs to be fixed or changed?"></textarea>
+      <div class="modal-actions">
+        <button class="modal-btn modal-btn-cancel" onclick="hideRejectModal()">Cancel</button>
+        <button class="modal-btn modal-btn-reject" onclick="submitRejection()">Reject Task</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     const vscode = acquireVsCodeApi();
     let draggedElement = null;
     let sortByPriority = true;
+    let currentRejectTaskId = null;
+
+    // Reject modal functions
+    function showRejectModal(taskId) {
+      currentRejectTaskId = taskId;
+      document.getElementById('rejectModal').style.display = 'flex';
+      document.getElementById('rejectNote').value = '';
+      document.getElementById('rejectNote').focus();
+    }
+
+    function hideRejectModal() {
+      document.getElementById('rejectModal').style.display = 'none';
+      currentRejectTaskId = null;
+    }
+
+    function submitRejection() {
+      const note = document.getElementById('rejectNote').value.trim();
+      if (!note) {
+        alert('Please provide feedback for the agent.');
+        return;
+      }
+      if (currentRejectTaskId) {
+        vscode.postMessage({
+          command: 'rejectTask',
+          taskId: currentRejectTaskId,
+          note: note
+        });
+        hideRejectModal();
+      }
+    }
+
+    // Close modal on overlay click
+    document.getElementById('rejectModal').addEventListener('click', (e) => {
+      if (e.target.id === 'rejectModal') {
+        hideRejectModal();
+      }
+    });
 
     // Click handler for task cards
     document.addEventListener('click', (e) => {
