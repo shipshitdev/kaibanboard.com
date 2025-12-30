@@ -4,3 +4,5 @@ build/
 coverage/
 *.vsix
 .vscode-test/
+
+.DS_Store

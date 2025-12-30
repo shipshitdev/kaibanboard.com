@@ -10,13 +10,13 @@ rm -rf out/
 rm -f *.vsix
 
 echo "📦 Installing dependencies..."
-pnpm install
+bun install
 
 echo "🔨 Compiling TypeScript..."
-pnpm run compile
+bun run compile
 
 echo "📦 Packaging extension..."
-pnpm run package
+bun run package
 
 echo "✅ Extension packaged successfully!"
 echo ""

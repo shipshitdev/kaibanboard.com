@@ -13,15 +13,18 @@ export function activate(context: vscode.ExtensionContext) {
 
   if (!isCursor) {
     vscode.window
-      .showWarningMessage(
-        "Kaiban Markdown is designed for Cursor IDE. Some features may not work correctly in VS Code. Please use Cursor for the best experience.",
-        "Learn More"
+      .showErrorMessage(
+        "Kaiban Markdown requires Cursor IDE. This extension is not compatible with VS Code. Please install Cursor IDE from https://cursor.com",
+        "Download Cursor"
       )
       .then((selection) => {
-        if (selection === "Learn More") {
+        if (selection === "Download Cursor") {
           vscode.env.openExternal(vscode.Uri.parse("https://cursor.com"));
         }
       });
+    // Don't activate the extension - return early
+    console.error("Kaiban Markdown: Extension requires Cursor IDE. Activation aborted.");
+    return;
   }
 
   console.log("Kaiban Markdown extension activated");
