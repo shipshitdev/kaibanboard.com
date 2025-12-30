@@ -13,6 +13,18 @@ vi.mock("./kanbanView", () => ({
   },
 }));
 
+// Mock the ApiKeyManager before importing extension
+vi.mock("./config/apiKeyManager", () => ({
+  ApiKeyManager: class {
+    getApiKey = vi.fn().mockResolvedValue(undefined);
+    hasApiKey = vi.fn().mockResolvedValue(false);
+    setApiKey = vi.fn().mockResolvedValue(undefined);
+    deleteApiKey = vi.fn().mockResolvedValue(undefined);
+    getAllConfiguredProviders = vi.fn().mockResolvedValue([]);
+    getProviderInfo = vi.fn().mockReturnValue({ name: "Test Provider" });
+  },
+}));
+
 // Import extension after mocking
 import { activate, deactivate } from "./extension";
 
@@ -23,6 +35,12 @@ describe("extension", () => {
   beforeEach(() => {
     mockContext = {
       subscriptions: [],
+      secrets: {
+        get: vi.fn().mockResolvedValue(undefined),
+        store: vi.fn().mockResolvedValue(undefined),
+        delete: vi.fn().mockResolvedValue(undefined),
+        onDidChange: vi.fn(),
+      },
     } as unknown as vscode.ExtensionContext;
     consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     mockShow.mockClear().mockResolvedValue(undefined);
@@ -59,8 +77,8 @@ describe("extension", () => {
 
     it("should add commands to subscriptions", () => {
       activate(mockContext);
-      // 5 commands: showBoard, refreshBoard, configureProviders, setApiKey, clearApiKey
-      expect(mockContext.subscriptions.length).toBe(5);
+      // 6 commands: showBoard, refreshBoard, configureProviders, setApiKey, clearApiKey, selectProvider
+      expect(mockContext.subscriptions.length).toBe(6);
     });
 
     it("should show welcome message with Open Board option", () => {

@@ -19,10 +19,16 @@ vi.mock("vscode", () => {
       showInformationMessage: vi.fn().mockResolvedValue(undefined),
       showErrorMessage: vi.fn().mockResolvedValue(undefined),
       showTextDocument: vi.fn().mockResolvedValue(undefined),
+      showQuickPick: vi.fn().mockResolvedValue(undefined),
+      showInputBox: vi.fn().mockResolvedValue(undefined),
     },
     workspace: {
       workspaceFolders: undefined,
       openTextDocument: vi.fn().mockResolvedValue({}),
+      getConfiguration: vi.fn().mockReturnValue({
+        get: vi.fn().mockReturnValue(""),
+      }),
+      onDidChangeConfiguration: vi.fn(() => mockDisposable),
     },
     commands: {
       registerCommand: vi.fn(() => mockDisposable),
@@ -33,11 +39,19 @@ vi.mock("vscode", () => {
       joinPath: vi.fn((base: { fsPath: string }, ...paths: string[]) => ({
         fsPath: [base.fsPath, ...paths].join("/"),
       })),
+      parse: vi.fn((uri: string) => ({ toString: () => uri })),
     },
     ViewColumn: {
       One: 1,
       Two: 2,
       Three: 3,
+    },
+    extensions: {
+      getExtension: vi.fn().mockReturnValue(undefined),
+    },
+    env: {
+      appName: "Cursor", // Pretend we're running in Cursor IDE
+      openExternal: vi.fn().mockResolvedValue(undefined),
     },
   };
 });

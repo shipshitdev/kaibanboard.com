@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import * as vscode from "vscode";
 import type { TaskPrompt } from "../types/aiProvider";
 import { CursorCloudAdapter } from "./cursorCloudAdapter";
 import { OpenAIAdapter } from "./openaiAdapter";
@@ -8,6 +9,23 @@ import { ReplicateAdapter } from "./replicateAdapter";
 // Mock global fetch
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
+
+// Mock child_process for CursorCloudAdapter's git command
+vi.mock("child_process", () => ({
+  exec: vi.fn((cmd, opts, callback) => {
+    if (typeof opts === "function") {
+      callback = opts;
+    }
+    // Simulate git remote origin url command
+    if (cmd.includes("remote.origin.url")) {
+      const cb = callback as (
+        error: Error | null,
+        result: { stdout: string; stderr: string }
+      ) => void;
+      cb(null, { stdout: "https://github.com/test/repo\n", stderr: "" });
+    }
+  }),
+}));
 
 describe("OpenRouterAdapter", () => {
   let adapter: OpenRouterAdapter;
@@ -206,6 +224,10 @@ describe("CursorCloudAdapter", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Re-setup vscode workspace mock after clearAllMocks
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: vi.fn().mockReturnValue(""),
+    } as unknown as vscode.WorkspaceConfiguration);
     adapter = new CursorCloudAdapter(mockGetApiKey);
   });
 

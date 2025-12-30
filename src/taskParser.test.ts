@@ -193,7 +193,7 @@ Second note line
       const tasks = await taskParser.parseTasks();
 
       expect(tasks[0].type).toBe("Task");
-      expect(tasks[0].status).toBe("Backlog");
+      expect(tasks[0].status).toBe("To Do");
       expect(tasks[0].priority).toBe("Medium");
       expect(tasks[0].description).toBe("");
       expect(tasks[0].prdPath).toBe("");
