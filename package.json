@@ -1,4 +1,5 @@
 {
+  "author": "Kaiban Markdown Contributors",
   "categories": [
     "Other"
   ],
@@ -13,8 +14,90 @@
         "command": "kaiban.refreshBoard",
         "icon": "$(refresh)",
         "title": "Kaiban: Refresh Board"
+      },
+      {
+        "command": "kaiban.configureProviders",
+        "icon": "$(settings-gear)",
+        "title": "Kaiban: Configure AI Providers"
+      },
+      {
+        "command": "kaiban.setApiKey",
+        "icon": "$(key)",
+        "title": "Kaiban: Set API Key"
+      },
+      {
+        "command": "kaiban.clearApiKey",
+        "icon": "$(trash)",
+        "title": "Kaiban: Clear API Key"
+      },
+      {
+        "command": "kaiban.configurePRDPath",
+        "icon": "$(folder)",
+        "title": "Kaiban: Configure PRD Base Path"
       }
     ],
+    "configuration": {
+      "properties": {
+        "kaiban.ai.defaultModel": {
+          "default": "",
+          "description": "Default model (provider-specific, leave empty for provider default)",
+          "type": "string"
+        },
+        "kaiban.ai.defaultProvider": {
+          "default": "openrouter",
+          "description": "Default AI provider for tasks",
+          "enum": [
+            "cursor",
+            "openai",
+            "openrouter",
+            "replicate"
+          ],
+          "type": "string"
+        },
+        "kaiban.ai.streamResponses": {
+          "default": true,
+          "description": "Stream AI responses in real-time (when supported)",
+          "type": "boolean"
+        },
+        "kaiban.columns.enabled": {
+          "default": [
+            "To Do",
+            "Doing",
+            "Testing",
+            "Done"
+          ],
+          "description": "List of column names to display on the Kanban board. Valid values: 'Backlog', 'To Do', 'Doing', 'Testing', 'Done', 'Blocked'.",
+          "items": {
+            "enum": [
+              "Backlog",
+              "To Do",
+              "Doing",
+              "Testing",
+              "Done",
+              "Blocked"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "kaiban.cursor.autoCreatePr": {
+          "default": true,
+          "description": "Automatically create PR when Cursor agent completes",
+          "type": "boolean"
+        },
+        "kaiban.cursor.repositoryUrl": {
+          "default": "",
+          "description": "GitHub repository URL for Cursor Cloud Agent",
+          "type": "string"
+        },
+        "kaiban.prd.basePath": {
+          "default": ".agent/PRDS",
+          "description": "Base path for PRD (Product Requirements Document) files. PRD paths in task files will be resolved relative to this path.",
+          "type": "string"
+        }
+      },
+      "title": "Kaiban Markdown"
+    },
     "viewsContainers": {
       "activitybar": [
         {
@@ -25,23 +108,36 @@
       ]
     }
   },
+  "dependencies": {
+    "lucide": "0.460.0"
+  },
   "description": "AI-powered Kanban board for markdown tasks from .agent/TASKS/",
   "devDependencies": {
-    "@biomejs/biome": "^2.3.10",
+    "@biomejs/biome": "2.3.10",
     "@types/node": "24.8.1",
     "@types/vscode": "1.99.0",
-    "@vitest/coverage-v8": "^4.0.16",
-    "@vitest/ui": "^4.0.16",
+    "@vitest/coverage-v8": "4.0.16",
+    "@vitest/ui": "4.0.16",
     "@vscode/vsce": "3.6.2",
-    "husky": "^9.1.7",
-    "lint-staged": "^16.2.7",
+    "husky": "9.1.7",
+    "lint-staged": "16.2.7",
     "typescript": "5.9.3",
-    "vitest": "^4.0.16"
+    "vitest": "4.0.16"
   },
   "displayName": "Kaiban Markdown",
   "engines": {
-    "vscode": "^1.99.0"
+    "vscode": "1.99.0"
   },
+  "keywords": [
+    "kanban",
+    "markdown",
+    "task-management",
+    "ai",
+    "productivity",
+    "agent",
+    "vscode-extension"
+  ],
+  "license": "MIT",
   "lint-staged": {
     "src/**/*.ts": [
       "biome check --write --no-errors-on-unmatched"
@@ -70,9 +166,9 @@
     "test:coverage": "vitest run --coverage",
     "test:ui": "vitest --ui",
     "test:watch": "vitest",
-    "version:major": "npm version major --no-git-tag-version",
-    "version:minor": "npm version minor --no-git-tag-version",
-    "version:patch": "npm version patch --no-git-tag-version",
+    "version:major": "bunx npm version major --no-git-tag-version",
+    "version:minor": "bunx npm version minor --no-git-tag-version",
+    "version:patch": "bunx npm version patch --no-git-tag-version",
     "vscode:prepublish": "bun run compile",
     "watch": "tsc -watch -p ./"
   },

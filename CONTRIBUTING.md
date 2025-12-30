@@ -1,0 +1,133 @@
+# Contributing to Kaiban Markdown
+
+Thank you for your interest in contributing to Kaiban Markdown! This document provides guidelines and instructions for contributing.
+
+## Getting Started
+
+1. **Fork the repository** on GitHub
+2. **Clone your fork** locally:
+   ```bash
+   git clone https://github.com/YOUR_USERNAME/kaiban-md.git
+   cd kaiban-md
+   ```
+3. **Install dependencies**:
+   ```bash
+   bun install
+   ```
+4. **Create a branch** for your changes:
+   ```bash
+   git checkout -b feature/your-feature-name
+   ```
+
+## Development
+
+### Project Structure
+
+- `src/` - Source code
+- `.agent/` - AI agent documentation (internal)
+- `out/` - Compiled JavaScript (generated)
+
+### Building
+
+```bash
+# Compile TypeScript
+bun run compile
+
+# Watch mode for development
+bun run watch
+```
+
+### Testing
+
+```bash
+# Run tests
+bun run test
+
+# Run tests with coverage
+bun run test:coverage
+
+# Watch mode
+bun run test:watch
+```
+
+### Linting and Formatting
+
+We use Biome for linting and formatting:
+
+```bash
+# Check for issues
+bun run check
+
+# Auto-fix issues
+bun run check:fix
+
+# Format code
+bun run format
+
+# Lint only
+bun run lint
+```
+
+All code must pass linting before submission.
+
+## Code Style
+
+- Follow the existing code style
+- Use TypeScript strict mode
+- Avoid `any` types - use proper types
+- Write clear, descriptive variable and function names
+- Add comments for complex logic
+- Include error handling for async operations
+
+## Testing in VS Code
+
+1. Open the project in VS Code
+2. Press `F5` to launch Extension Development Host
+3. Test your changes in the new window
+4. Use `Cmd+Shift+B` to recompile during development
+
+## Pull Request Process
+
+1. **Ensure your code passes all checks**:
+   - All tests pass
+   - Linting passes (`bun run check`)
+   - Code is properly formatted
+   - No TypeScript errors
+
+2. **Write clear commit messages**:
+   - Use conventional commits format
+   - Describe what and why, not how
+   - Reference issues when applicable
+
+3. **Update documentation** if needed:
+   - Update README.md for user-facing changes
+   - Update code comments for complex changes
+
+4. **Create your Pull Request**:
+   - Provide a clear description
+   - Reference related issues
+   - Add screenshots for UI changes
+
+5. **Respond to feedback** promptly
+
+## Reporting Issues
+
+When reporting bugs or suggesting features:
+
+- Use the GitHub issue tracker
+- Provide clear steps to reproduce bugs
+- Include environment information (VS Code version, OS, etc.)
+- For feature requests, explain the use case
+
+## Code of Conduct
+
+Be respectful and inclusive. We welcome contributors from all backgrounds and experience levels.
+
+## Questions?
+
+Feel free to open an issue for discussion or questions about contributing.
+
+---
+
+Thank you for contributing to Kaiban Markdown! 🎉
+

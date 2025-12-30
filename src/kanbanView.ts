@@ -1,12 +1,59 @@
+import * as path from "node:path";
 import * as vscode from "vscode";
+import { CursorCloudAdapter } from "./adapters/cursorCloudAdapter";
+import { OpenAIAdapter } from "./adapters/openaiAdapter";
+import { OpenRouterAdapter } from "./adapters/openrouterAdapter";
+import { ReplicateAdapter } from "./adapters/replicateAdapter";
+import type { ApiKeyManager } from "./config/apiKeyManager";
+import { ProviderRegistry } from "./services/providerRegistry";
 import { type Task, TaskParser } from "./taskParser";
+import type { ProviderType, TaskPrompt } from "./types/aiProvider";
+import { Icons } from "./utils/lucideIcons";
 
 export class KanbanViewProvider {
   private panel: vscode.WebviewPanel | undefined;
   private taskParser: TaskParser;
+  private providerRegistry: ProviderRegistry;
+  private pollingIntervals: Map<string, NodeJS.Timeout> = new Map();
 
-  constructor(private context: vscode.ExtensionContext) {
+  constructor(
+    private context: vscode.ExtensionContext,
+    apiKeyManager?: ApiKeyManager
+  ) {
     this.taskParser = new TaskParser();
+    // biome-ignore lint/style/noNonNullAssertion: apiKeyManager is checked before use
+    this.providerRegistry = new ProviderRegistry(apiKeyManager!);
+
+    // Register adapters
+    if (apiKeyManager) {
+      this.providerRegistry.registerAdapter(
+        new OpenRouterAdapter(() => apiKeyManager.getApiKey("openrouter"))
+      );
+
+      this.providerRegistry.registerAdapter(
+        new OpenAIAdapter(() => apiKeyManager.getApiKey("openai"))
+      );
+
+      this.providerRegistry.registerAdapter(
+        new CursorCloudAdapter(() => apiKeyManager.getApiKey("cursor"))
+      );
+
+      this.providerRegistry.registerAdapter(
+        new ReplicateAdapter(() => apiKeyManager.getApiKey("replicate"))
+      );
+    }
+
+    // Listen for configuration changes to auto-refresh board
+    vscode.workspace.onDidChangeConfiguration(
+      (e) => {
+        if (e.affectsConfiguration("kaiban.columns.enabled")) {
+          // Auto-refresh the board when columns change
+          this.refresh();
+        }
+      },
+      null,
+      this.context.subscriptions
+    );
   }
 
   public async show() {
@@ -40,14 +87,26 @@ export class KanbanViewProvider {
           case "refresh":
             await this.refresh();
             break;
+          case "openSettings":
+            await vscode.commands.executeCommand("kaiban.configurePRDPath");
+            break;
           case "loadPRD":
-            await this.loadPRDContent(message.prdPath);
+            await this.loadPRDContent(message.prdPath, message.taskFilePath);
             break;
           case "updateTaskStatus":
             await this.updateTaskStatus(message.taskId, message.newStatus);
             break;
-          case "rejectTask":
-            await this.rejectTask(message.taskId, message.note);
+          case "getAvailableProviders":
+            await this.handleGetAvailableProviders();
+            break;
+          case "getModelsForProvider":
+            await this.handleGetModelsForProvider(message.provider);
+            break;
+          case "prepareAgentPrompt":
+            await this.handlePrepareAgentPrompt(message.taskId);
+            break;
+          case "sendToAgent":
+            await this.handleSendToAgent(message.taskId, message.provider, message.model);
             break;
         }
       },
@@ -66,7 +125,12 @@ export class KanbanViewProvider {
     const tasks = await this.taskParser.parseTasks();
     const groupedTasks = this.taskParser.groupByStatus(tasks);
 
-    this.panel.webview.html = this.getWebviewContent(groupedTasks);
+    // Check if any API keys are configured
+    const hasAnyApiKey = await this.providerRegistry
+      .getEnabledAdapters()
+      .then((adapters) => adapters.length > 0);
+
+    this.panel.webview.html = await this.getWebviewContent(groupedTasks, hasAnyApiKey);
   }
 
   private async openTaskFile(filePath: string) {
@@ -79,13 +143,16 @@ export class KanbanViewProvider {
     }
   }
 
-  private async loadPRDContent(prdPath: string) {
+  private async loadPRDContent(prdPath: string, taskFilePath?: string) {
     if (!this.panel) {
       return;
     }
 
     try {
-      // Find the PRD file in workspace
+      // Get PRD base path from configuration
+      const config = vscode.workspace.getConfiguration("kaiban.prd");
+      const basePath = config.get<string>("basePath", ".agent/PRDS");
+
       const workspaceFolders = vscode.workspace.workspaceFolders;
       if (!workspaceFolders) {
         return;
@@ -93,14 +160,70 @@ export class KanbanViewProvider {
 
       let prdContent = "";
 
-      // Try to find PRD file in each workspace folder
       for (const folder of workspaceFolders) {
-        const prdUri = vscode.Uri.joinPath(folder.uri, prdPath);
+        // Strategy 1: Resolve from configured base path (primary method)
+        // Extract the relative path after any "../" segments that navigate to PRDS/
+        // For paths like "../../../PRDS/analytics/file.md", extract "analytics/file.md"
+        let relativePrdPath = prdPath;
+
+        // If path contains the base path directory name, extract everything after it
+        const basePathDir = path.basename(basePath);
+        if (prdPath.includes(`${basePathDir}/`)) {
+          const index = prdPath.indexOf(`${basePathDir}/`);
+          relativePrdPath = prdPath.substring(index + basePathDir.length + 1);
+        } else if (prdPath.startsWith("../") || prdPath.startsWith("./")) {
+          // For relative paths starting with ../, extract just the filename or subpath
+          // This handles cases where the path is like "../PRDS/file.md"
+          const parts = prdPath.split("/");
+          // Find where the actual file path starts (after all ../)
+          let startIndex = 0;
+          for (let i = 0; i < parts.length; i++) {
+            if (parts[i] !== ".." && parts[i] !== "." && parts[i] !== "") {
+              startIndex = i;
+              break;
+            }
+          }
+          // If we found the base path directory, skip it
+          if (parts[startIndex] === basePathDir) {
+            relativePrdPath = parts.slice(startIndex + 1).join("/");
+          } else {
+            relativePrdPath = parts.slice(startIndex).join("/");
+          }
+        } else if (!path.isAbsolute(prdPath) && !prdPath.startsWith("http")) {
+          // For simple relative paths, use as-is
+          relativePrdPath = prdPath;
+        }
+
+        // Resolve from the configured base path
         try {
+          const baseUri = vscode.Uri.joinPath(folder.uri, basePath);
+          const prdUri = vscode.Uri.joinPath(baseUri, relativePrdPath);
           const document = await vscode.workspace.openTextDocument(prdUri);
           prdContent = document.getText();
-          break;
+          if (prdContent) break;
         } catch (_error) {}
+
+        // Strategy 2: Fallback - resolve relative to task file if available
+        if (taskFilePath && !prdContent) {
+          try {
+            const taskDir = path.dirname(taskFilePath);
+            const resolvedPath = path.resolve(taskDir, prdPath);
+            const prdUri = vscode.Uri.file(resolvedPath);
+            const document = await vscode.workspace.openTextDocument(prdUri);
+            prdContent = document.getText();
+            if (prdContent) break;
+          } catch (_error) {}
+        }
+
+        // Strategy 3: Fallback - resolve relative to workspace root
+        if (!prdContent && !prdPath.startsWith("/") && !prdPath.startsWith("http")) {
+          try {
+            const prdUri = vscode.Uri.joinPath(folder.uri, prdPath);
+            const document = await vscode.workspace.openTextDocument(prdUri);
+            prdContent = document.getText();
+            if (prdContent) break;
+          } catch (_error) {}
+        }
       }
 
       if (prdContent) {
@@ -113,7 +236,7 @@ export class KanbanViewProvider {
       } else {
         this.panel.webview.postMessage({
           command: "updatePRDContent",
-          content: "<p>PRD file not found or could not be loaded.</p>",
+          content: `<p>PRD file not found. Tried: ${prdPath}</p>`,
         });
       }
     } catch (error) {
@@ -128,7 +251,7 @@ export class KanbanViewProvider {
     try {
       await this.taskParser.updateTaskStatus(
         taskId,
-        newStatus as "Backlog" | "To Do" | "Testing" | "Done"
+        newStatus as "Backlog" | "To Do" | "Doing" | "Testing" | "Done" | "Blocked"
       );
       // Refresh the board after updating
       await this.refresh();
@@ -146,6 +269,271 @@ export class KanbanViewProvider {
     } catch (error) {
       vscode.window.showErrorMessage(`Failed to reject task: ${error}`);
     }
+  }
+
+  // AI Provider handlers
+  private async handleGetAvailableProviders() {
+    if (!this.panel) return;
+
+    try {
+      const providers = await this.providerRegistry.getAvailableProviders();
+      this.panel.webview.postMessage({
+        command: "availableProviders",
+        providers,
+      });
+    } catch (error) {
+      this.panel.webview.postMessage({
+        command: "providerError",
+        error: String(error),
+      });
+    }
+  }
+
+  private async handleGetModelsForProvider(provider: ProviderType) {
+    if (!this.panel) return;
+
+    try {
+      const adapter = this.providerRegistry.getAdapter(provider);
+      if (!adapter) {
+        throw new Error(`Provider ${provider} not found`);
+      }
+
+      const models = await adapter.getAvailableModels();
+      this.panel.webview.postMessage({
+        command: "updateModelsForProvider",
+        provider,
+        models,
+      });
+    } catch (error) {
+      this.panel.webview.postMessage({
+        command: "updateModelsForProvider",
+        models: [],
+        error: String(error),
+      });
+    }
+  }
+
+  private async handlePrepareAgentPrompt(taskId: string) {
+    if (!this.panel) return;
+
+    try {
+      const tasks = await this.taskParser.parseTasks();
+      const task = tasks.find((t) => t.id === taskId);
+
+      if (!task) {
+        throw new Error(`Task ${taskId} not found`);
+      }
+
+      // Check if already claimed
+      if (task.claimedBy) {
+        throw new Error(`Task is already claimed by ${task.claimedBy}`);
+      }
+
+      // Load PRD content if available
+      let prdContent = "";
+      if (task.prdPath) {
+        prdContent = await this.loadPRDContentRaw(task.prdPath);
+      }
+
+      // Get available providers
+      const providers = await this.providerRegistry.getAvailableProviders();
+
+      this.panel.webview.postMessage({
+        command: "showAgentModal",
+        task: {
+          id: task.id,
+          label: task.label,
+          description: task.description,
+          type: task.type,
+          priority: task.priority,
+          prdContent,
+          rejectionHistory: task.agentNotes,
+          filePath: task.filePath,
+        },
+        providers,
+      });
+    } catch (error) {
+      vscode.window.showErrorMessage(`Error preparing agent: ${error}`);
+    }
+  }
+
+  private async handleSendToAgent(taskId: string, provider: ProviderType, model?: string) {
+    if (!this.panel) return;
+
+    try {
+      const tasks = await this.taskParser.parseTasks();
+      const task = tasks.find((t) => t.id === taskId);
+
+      if (!task) {
+        throw new Error(`Task ${taskId} not found`);
+      }
+
+      // Double-check not already claimed
+      if (task.claimedBy) {
+        throw new Error(`Task is already claimed by ${task.claimedBy}`);
+      }
+
+      const adapter = this.providerRegistry.getAdapter(provider);
+      if (!adapter) {
+        throw new Error(`Provider ${provider} not available`);
+      }
+
+      // Load PRD content
+      let prdContent = "";
+      if (task.prdPath) {
+        prdContent = await this.loadPRDContentRaw(task.prdPath);
+      }
+
+      const taskPrompt: TaskPrompt = {
+        title: task.label,
+        description: task.description,
+        type: task.type,
+        priority: task.priority,
+        prdContent,
+        rejectionHistory: task.agentNotes,
+        filePath: task.filePath,
+      };
+
+      // Send to agent
+      const response = await adapter.sendTask(taskPrompt, { model });
+
+      if (response.status === "error") {
+        this.panel.webview.postMessage({
+          command: "agentSendError",
+          taskId,
+          error: response.error,
+        });
+        return;
+      }
+
+      // Notify webview of success
+      this.panel.webview.postMessage({
+        command: "agentSendSuccess",
+        taskId,
+        agentId: response.id,
+        provider,
+        model,
+      });
+
+      vscode.window.showInformationMessage(
+        `Task sent to ${adapter.displayName}${response.branchName ? ` (Branch: ${response.branchName})` : ""}`
+      );
+
+      // If provider supports agent mode (like Cursor), start polling
+      if (adapter.supportsAgentMode && adapter.checkStatus && response.id) {
+        this.startAgentPolling(taskId, response.id, provider);
+      }
+
+      await this.refresh();
+    } catch (error) {
+      this.panel?.webview.postMessage({
+        command: "agentSendError",
+        taskId,
+        error: String(error),
+      });
+      vscode.window.showErrorMessage(`Failed to send to agent: ${error}`);
+    }
+  }
+
+  private startAgentPolling(taskId: string, agentId: string, provider: ProviderType) {
+    // Poll every 30 seconds
+    const interval = setInterval(async () => {
+      try {
+        const adapter = this.providerRegistry.getAdapter(provider);
+        if (!adapter?.checkStatus) {
+          this.stopAgentPolling(taskId);
+          return;
+        }
+
+        const status = await adapter.checkStatus(agentId);
+
+        if (status.status === "completed" || status.status === "error") {
+          this.stopAgentPolling(taskId);
+          await this.refresh();
+
+          if (status.status === "completed") {
+            const message = status.prUrl
+              ? `Agent completed! PR: ${status.prUrl}`
+              : "Agent completed the task!";
+
+            const action = status.prUrl ? "View PR" : undefined;
+            const selection = action
+              ? await vscode.window.showInformationMessage(message, action)
+              : await vscode.window.showInformationMessage(message);
+
+            if (selection === "View PR" && status.prUrl) {
+              vscode.env.openExternal(vscode.Uri.parse(status.prUrl));
+            }
+          } else {
+            vscode.window.showWarningMessage(`Agent encountered an error: ${status.error}`);
+          }
+        }
+      } catch (error) {
+        console.error("Error polling agent status:", error);
+      }
+    }, 30000);
+
+    this.pollingIntervals.set(taskId, interval);
+  }
+
+  private stopAgentPolling(taskId: string) {
+    const interval = this.pollingIntervals.get(taskId);
+    if (interval) {
+      clearInterval(interval);
+      this.pollingIntervals.delete(taskId);
+    }
+  }
+
+  private async loadPRDContentRaw(prdPath: string): Promise<string> {
+    // Get PRD base path from configuration
+    const config = vscode.workspace.getConfiguration("kaiban.prd");
+    const basePath = config.get<string>("basePath", ".agent/PRDS");
+
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders) return "";
+
+    for (const folder of workspaceFolders) {
+      // Extract relative path after base path directory
+      let relativePrdPath = prdPath;
+      const basePathDir = path.basename(basePath);
+
+      if (prdPath.includes(`${basePathDir}/`)) {
+        const index = prdPath.indexOf(`${basePathDir}/`);
+        relativePrdPath = prdPath.substring(index + basePathDir.length + 1);
+      } else if (prdPath.startsWith("../") || prdPath.startsWith("./")) {
+        const parts = prdPath.split("/");
+        let startIndex = 0;
+        for (let i = 0; i < parts.length; i++) {
+          if (parts[i] !== ".." && parts[i] !== "." && parts[i] !== "") {
+            startIndex = i;
+            break;
+          }
+        }
+        if (parts[startIndex] === basePathDir) {
+          relativePrdPath = parts.slice(startIndex + 1).join("/");
+        } else {
+          relativePrdPath = parts.slice(startIndex).join("/");
+        }
+      }
+
+      // Resolve from configured base path
+      try {
+        const baseUri = vscode.Uri.joinPath(folder.uri, basePath);
+        const prdUri = vscode.Uri.joinPath(baseUri, relativePrdPath);
+        const document = await vscode.workspace.openTextDocument(prdUri);
+        return document.getText();
+      } catch {}
+
+      // Fallback: resolve relative to workspace root
+      if (!prdPath.startsWith("/") && !prdPath.startsWith("http")) {
+        try {
+          const prdUri = vscode.Uri.joinPath(folder.uri, prdPath);
+          const document = await vscode.workspace.openTextDocument(prdUri);
+          return document.getText();
+        } catch {}
+      }
+    }
+    return "";
   }
 
   private renderMarkdown(content: string): string {
@@ -175,32 +563,56 @@ export class KanbanViewProvider {
     return html;
   }
 
-  private getWebviewContent(groupedTasks: Record<string, Task[]>): string {
+  private async getWebviewContent(
+    groupedTasks: Record<string, Task[]>,
+    hasAnyApiKey: boolean = false
+  ): Promise<string> {
+    // Get configured columns from settings
+    const config = vscode.workspace.getConfiguration("kaiban.columns");
+    const enabledColumns = config.get<string[]>("enabled", ["To Do", "Doing", "Testing", "Done"]);
+
     // Sort function: High > Medium > Low
     const sortByPriority = (tasks: Task[]) => {
       const priorityOrder = { High: 0, Medium: 1, Low: 2 };
       return tasks.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
     };
 
-    const backlogTasks = sortByPriority(groupedTasks.Backlog || []);
-    const todoTasks = sortByPriority(groupedTasks["To Do"] || []);
-    const testingTasks = sortByPriority(groupedTasks.Testing || []);
-    const doneTasks = sortByPriority(groupedTasks.Done || []);
+    // Sort tasks for each enabled column
+    const columnTasks: Record<string, Task[]> = {};
+    let totalTasks = 0;
+    for (const column of enabledColumns) {
+      const sorted = sortByPriority(groupedTasks[column] || []);
+      columnTasks[column] = sorted;
+      totalTasks += sorted.length;
+    }
+
+    const isEmpty = totalTasks === 0;
 
     const renderTask = (task: Task) => {
       const priorityClass = task.priority.toLowerCase();
       const completedClass = task.completed ? "completed" : "";
       const isInTesting = task.status === "Testing";
+      const isInToDo = task.status === "To Do";
+      const isInDoing = task.status === "Doing";
       const hasAgent = task.claimedBy && task.claimedBy.length > 0;
       const agentPlatform = hasAgent ? task.claimedBy.split("-")[0] : "";
+      const canSendToAgent =
+        hasAnyApiKey &&
+        (isInToDo || isInDoing || isInTesting) &&
+        !hasAgent &&
+        task.agentStatus !== "running";
+      const isAgentRunning = task.agentStatus === "running";
+      const agentStatusClass = task.agentStatus ? `agent-${task.agentStatus}` : "";
 
       return `
-        <div class="task-card ${priorityClass} ${completedClass}"
+        <div class="task-card ${priorityClass} ${completedClass} ${agentStatusClass}"
              draggable="true"
              data-filepath="${task.filePath}"
              data-task-id="${task.id}"
              data-prd-path="${task.prdPath}"
-             data-status="${task.status}">
+             data-status="${task.status}"
+             data-label="${this.escapeHtml(task.label)}"
+             data-description="${this.escapeHtml(task.description || "")}">
           <div class="task-header">
             <span class="task-title">${this.escapeHtml(task.label)}</span>
             ${task.completed ? '<span class="task-check">[Done]</span>' : ""}
@@ -208,12 +620,16 @@ export class KanbanViewProvider {
           <div class="task-meta">
             <span class="badge priority-${priorityClass}">${task.priority}</span>
             <span class="badge type">${task.type}</span>
-            ${hasAgent ? `<span class="badge agent-badge">🤖 ${agentPlatform}</span>` : ""}
-            ${task.rejectionCount > 0 ? `<span class="badge rejection-badge">↩ ${task.rejectionCount}</span>` : ""}
+            ${hasAgent ? `<span class="badge agent-badge ${agentPlatform}">${Icons.bot(14)} ${agentPlatform}</span>` : ""}
+            ${isAgentRunning ? `<span class="badge agent-running-badge">${Icons.refresh(14)} Running</span>` : ""}
+            ${task.agentProvider ? `<span class="badge provider-badge provider-${task.agentProvider}">${task.agentProvider}</span>` : ""}
+            ${task.rejectionCount > 0 ? `<span class="badge rejection-badge">${Icons.rotateCcw(14)} ${task.rejectionCount}</span>` : ""}
           </div>
           <div class="task-footer">
             <span class="project-name">${this.escapeHtml(task.project)}</span>
-            ${isInTesting ? `<button class="reject-btn" onclick="showRejectModal('${task.id}')" title="Reject and return to To Do">Reject</button>` : ""}
+            <div class="task-actions">
+              ${canSendToAgent ? `<button class="agent-btn" onclick="event.stopPropagation(); showAgentModal('${task.id}')" title="Send to AI Agent">${Icons.play(16)}</button>` : ""}
+            </div>
           </div>
         </div>
       `;
@@ -269,6 +685,57 @@ export class KanbanViewProvider {
       font-size: 14px;
     }
 
+    select.action-btn {
+      padding: 8px 28px 8px 12px;
+      position: relative;
+      cursor: pointer;
+      outline: none;
+      appearance: none;
+      -webkit-appearance: none;
+      -moz-appearance: none;
+      min-width: 120px;
+    }
+
+    select.action-btn.secondary-btn {
+      background-color: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+    }
+
+    select.action-btn.secondary-btn::after {
+      content: '';
+      position: absolute;
+      right: 8px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 12px;
+      height: 12px;
+      background-color: var(--vscode-button-secondaryForeground);
+      -webkit-mask-image: url("data:image/svg+xml,%3Csvg width='12' height='12' viewBox='0 0 12 12' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M2 4L6 8L10 4' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+      mask-image: url("data:image/svg+xml,%3Csvg width='12' height='12' viewBox='0 0 12 12' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M2 4L6 8L10 4' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+      -webkit-mask-repeat: no-repeat;
+      mask-repeat: no-repeat;
+      -webkit-mask-size: contain;
+      mask-size: contain;
+      -webkit-mask-position: center;
+      mask-position: center;
+      pointer-events: none;
+    }
+
+    select.action-btn option {
+      background: var(--vscode-dropdown-background);
+      color: var(--vscode-dropdown-foreground);
+    }
+
+    .icon-btn {
+      padding: 8px;
+      width: 32px;
+      height: 32px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+    }
+
     .action-btn:hover {
       background: var(--vscode-button-hoverBackground);
     }
@@ -282,15 +749,18 @@ export class KanbanViewProvider {
       background: var(--vscode-button-secondaryHoverBackground);
     }
 
+
     .board {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 20px;
+      grid-template-columns: repeat(${enabledColumns.length}, 1fr);
+      gap: 12px;
       height: calc(100vh - 100px);
+      position: relative;
     }
 
     .board.with-prd {
-      grid-template-columns: 1fr 1fr 1fr 1fr 40%;
+      margin-right: 40%;
+      transition: margin-right 0.3s ease;
     }
 
     .column {
@@ -300,6 +770,37 @@ export class KanbanViewProvider {
       display: flex;
       flex-direction: column;
       min-height: 0;
+      border-left: 4px solid transparent;
+    }
+
+    .column[data-status="Backlog"] {
+      border-left-color: #6b7280;
+      background: rgba(107, 114, 128, 0.05);
+    }
+
+    .column[data-status="To Do"] {
+      border-left-color: #3b82f6;
+      background: rgba(59, 130, 246, 0.05);
+    }
+
+    .column[data-status="Doing"] {
+      border-left-color: #8b5cf6;
+      background: rgba(139, 92, 246, 0.05);
+    }
+
+    .column[data-status="Testing"] {
+      border-left-color: #f59e0b;
+      background: rgba(245, 158, 11, 0.05);
+    }
+
+    .column[data-status="Done"] {
+      border-left-color: #10b981;
+      background: rgba(16, 185, 129, 0.05);
+    }
+
+    .column[data-status="Blocked"] {
+      border-left-color: #ef4444;
+      background: rgba(239, 68, 68, 0.05);
     }
 
     .column-header {
@@ -333,12 +834,19 @@ export class KanbanViewProvider {
       border-radius: 6px;
       padding: 12px;
       margin-bottom: 10px;
-      cursor: pointer;
+      cursor: grab;
       transition: all 0.2s;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    .task-card:active {
+      cursor: grabbing;
     }
 
     .task-card:hover {
-      border-color: var(--vscode-focusBorder);
+      background-color: var(--vscode-list-hoverBackground);
+      border-color: var(--vscode-list-activeSelectionBorder, var(--vscode-panel-border));
       transform: translateY(-2px);
       box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
     }
@@ -440,20 +948,81 @@ export class KanbanViewProvider {
       opacity: 0.8;
     }
 
-    .reject-btn {
-      background: rgba(244, 67, 54, 0.2);
-      color: #f44336;
-      border: 1px solid #f44336;
-      padding: 2px 8px;
-      border-radius: 3px;
-      font-size: 10px;
-      cursor: pointer;
-      transition: all 0.2s;
+
+    .task-actions {
+      display: flex;
+      gap: 6px;
     }
 
-    .reject-btn:hover {
-      background: #f44336;
+    .agent-btn {
+      background: rgba(99, 102, 241, 0.2);
+      color: #6366f1;
+      border: 1px solid #6366f1;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 24px;
+      height: 24px;
+    }
+
+    .agent-btn:hover {
+      background: #6366f1;
       color: white;
+      color: white;
+    }
+
+    /* Agent status indicators */
+    .task-card.agent-running {
+      border-left: 3px solid #6366f1;
+    }
+
+    .task-card.agent-completed {
+      border-left: 3px solid #22c55e;
+    }
+
+    .task-card.agent-error {
+      border-left: 3px solid #ef4444;
+    }
+
+    .agent-running-badge {
+      background: rgba(99, 102, 241, 0.2);
+      color: #6366f1;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    /* Provider badges */
+    .provider-badge {
+      font-size: 9px;
+    }
+
+    .provider-cursor {
+      background: rgba(99, 102, 241, 0.2);
+      color: #6366f1;
+    }
+
+    .provider-openai {
+      background: rgba(16, 163, 127, 0.2);
+      color: #10a37f;
+    }
+
+    .provider-openrouter {
+      background: rgba(168, 85, 247, 0.2);
+      color: #a855f7;
+    }
+
+    .provider-replicate {
+      background: rgba(234, 179, 8, 0.2);
+      color: #eab308;
     }
 
     /* Reject Modal */
@@ -516,9 +1085,116 @@ export class KanbanViewProvider {
       color: var(--vscode-button-secondaryForeground);
     }
 
-    .modal-btn-reject {
-      background: #f44336;
+    .modal-btn-send {
+      background: #6366f1;
       color: white;
+    }
+
+    .modal-btn-send:hover {
+      background: #4f46e5;
+    }
+
+    .modal-btn-send:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    /* Agent Modal specific */
+    .agent-modal {
+      width: 500px;
+    }
+
+    .task-preview {
+      background: var(--vscode-input-background);
+      padding: 12px;
+      border-radius: 6px;
+      margin-bottom: 15px;
+    }
+
+    .task-preview strong {
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    .task-preview p {
+      font-size: 12px;
+      color: var(--vscode-descriptionForeground);
+      margin: 0;
+    }
+
+    .form-group {
+      margin-bottom: 15px;
+    }
+
+    .form-group label {
+      display: block;
+      margin-bottom: 6px;
+      font-weight: 500;
+    }
+
+    .form-group select {
+      width: 100%;
+      padding: 8px 12px;
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 4px;
+      background: var(--vscode-input-background);
+      color: var(--vscode-input-foreground);
+      font-family: var(--vscode-font-family);
+      font-size: 14px;
+    }
+
+    .form-group select:focus {
+      outline: none;
+      border-color: var(--vscode-focusBorder);
+    }
+
+    .provider-options {
+      background: var(--vscode-input-background);
+      padding: 12px;
+      border-radius: 6px;
+      margin-bottom: 15px;
+    }
+
+    .provider-options label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+    }
+
+    .provider-options input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+    }
+
+    .loading-spinner {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border: 2px solid transparent;
+      border-top-color: currentColor;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin-left: 8px;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .no-providers-warning {
+      background: rgba(244, 67, 54, 0.1);
+      border: 1px solid #f44336;
+      color: #f44336;
+      padding: 12px;
+      border-radius: 6px;
+      margin-bottom: 15px;
+      font-size: 13px;
+    }
+
+    .no-providers-warning a {
+      color: #f44336;
+      text-decoration: underline;
     }
 
     .empty-state {
@@ -526,6 +1202,45 @@ export class KanbanViewProvider {
       padding: 40px 20px;
       color: var(--vscode-descriptionForeground);
       font-style: italic;
+    }
+
+    .empty-state-setup {
+      text-align: center;
+      padding: 60px 40px;
+      color: var(--vscode-foreground);
+      max-width: 600px;
+      margin: 0 auto;
+    }
+
+    .empty-state-setup h3 {
+      font-size: 18px;
+      margin-bottom: 16px;
+      color: var(--vscode-foreground);
+    }
+
+    .empty-state-setup p {
+      margin-bottom: 12px;
+      line-height: 1.6;
+      color: var(--vscode-descriptionForeground);
+    }
+
+    .empty-state-setup code {
+      background: var(--vscode-textCodeBlock-background);
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: var(--vscode-editor-font-family);
+      font-size: 13px;
+    }
+
+    .empty-state-setup ol {
+      text-align: left;
+      margin: 20px 0;
+      padding-left: 30px;
+    }
+
+    .empty-state-setup li {
+      margin-bottom: 12px;
+      line-height: 1.6;
     }
 
     /* Scrollbar */
@@ -547,14 +1262,28 @@ export class KanbanViewProvider {
     }
 
     .prd-preview-panel {
+      position: fixed;
+      top: 80px;
+      right: 0;
+      width: 40%;
+      height: calc(100vh - 80px);
       background: var(--vscode-sideBar-background);
-      border-radius: 8px;
-      padding: 15px;
+      border-left: 2px solid var(--vscode-panel-border);
+      padding: 20px;
       display: flex;
       flex-direction: column;
       min-height: 0;
-      border-left: 1px solid var(--vscode-panel-border);
+      box-shadow: -4px 0 12px rgba(0, 0, 0, 0.1);
+      z-index: 1000;
+      overflow: hidden;
+      transform: translateX(100%);
+      transition: transform 0.3s ease-in-out;
     }
+
+    .prd-preview-panel[data-visible="true"] {
+      transform: translateX(0);
+    }
+
 
     .prd-header {
       font-size: 16px;
@@ -628,74 +1357,99 @@ export class KanbanViewProvider {
     <div class="header">
       <div class="title">Kaiban Markdown</div>
       <div class="header-actions">
-        <button class="action-btn secondary-btn" onclick="toggleSort()" id="sortBtn">
-          Sort: Priority
+        <select class="action-btn secondary-btn" id="sortSelect" onchange="onSortChange()" title="Sort tasks">
+          <option value="default">Default</option>
+          <option value="priority-asc">Priority ↑</option>
+          <option value="priority-desc">Priority ↓</option>
+          <option value="name-asc">Name A-Z</option>
+          <option value="name-desc">Name Z-A</option>
+        </select>
+        <button class="action-btn secondary-btn icon-btn" onclick="openSettings()" title="Open Settings">
+          ${Icons.settings(16)}
         </button>
-        <button class="action-btn" onclick="refresh()">Refresh</button>
+        <button class="action-btn secondary-btn icon-btn" onclick="refresh()" title="Refresh">
+          ${Icons.refresh(16)}
+        </button>
       </div>
     </div>
 
   <div class="board" id="kanbanBoard">
-    <div class="column" data-status="Backlog">
+    ${
+      isEmpty
+        ? `
+    <div style="grid-column: 1 / -1; display: flex; align-items: center; justify-content: center; padding: 40px;">
+      <div class="empty-state-setup">
+        <h3>Welcome to Kaiban Markdown!</h3>
+        <p>Get started by creating your first task. Here's how:</p>
+        <ol>
+          <li>Create the folder structure in your workspace root:
+            <br><code>mkdir -p .agent/TASKS .agent/PRDS</code>
+          </li>
+          <li>Create a task file in <code>.agent/TASKS/</code> (e.g., <code>my-task.md</code>)</li>
+          <li>Use this template:
+            <pre style="background: var(--vscode-textCodeBlock-background); padding: 12px; border-radius: 6px; margin-top: 8px; text-align: left; font-size: 12px; overflow-x: auto;"><code>## Task: My Task Title
+
+**ID:** task-001
+**Label:** My Task Title
+**Description:** Task description
+**Type:** Feature
+**Status:** To Do
+**Priority:** Medium
+**Created:** ${new Date().toISOString().split("T")[0]}
+**Updated:** ${new Date().toISOString().split("T")[0]}
+**PRD:** [Link](../PRDS/my-task-prd.md)
+
+---
+
+## Additional Notes
+Your task details here...</code></pre>
+          </li>
+          <li>Click <strong>Refresh</strong> to see your task appear!</li>
+        </ol>
+        <p style="margin-top: 24px; font-size: 13px; color: var(--vscode-descriptionForeground);">
+          📖 See the README for detailed setup instructions and examples.
+        </p>
+      </div>
+    </div>
+        `
+        : `
+${enabledColumns
+  .map((column) => {
+    const tasks = columnTasks[column] || [];
+    const columnClass = column.toLowerCase().replace(/\s+/g, "-");
+    const emptyMessages: Record<string, string> = {
+      Backlog: "No tasks in backlog",
+      "To Do": "No tasks to do",
+      Doing: "No tasks in progress",
+      Testing: "No tasks in testing",
+      Done: "No completed tasks",
+      Blocked: "No blocked tasks",
+    };
+    const emptyMessage = emptyMessages[column] || `No tasks in ${column}`;
+
+    return `
+    <div class="column column-${columnClass}" data-status="${column}">
       <div class="column-header">
-        <span>Backlog</span>
-        <span class="column-count">${backlogTasks.length}</span>
+        <span>${column}</span>
+        <span class="column-count">${tasks.length}</span>
       </div>
       <div class="column-content">
         ${
-          backlogTasks.length > 0
-            ? backlogTasks.map(renderTask).join("")
-            : '<div class="empty-state">No tasks in backlog</div>'
+          tasks.length > 0
+            ? tasks.map(renderTask).join("")
+            : `<div class="empty-state">${emptyMessage}</div>`
         }
       </div>
-    </div>
+    </div>`;
+  })
+  .join("")}
+        `
+    }
 
-    <div class="column" data-status="To Do">
-      <div class="column-header">
-        <span>To Do</span>
-        <span class="column-count">${todoTasks.length}</span>
-      </div>
-      <div class="column-content">
-        ${
-          todoTasks.length > 0
-            ? todoTasks.map(renderTask).join("")
-            : '<div class="empty-state">No tasks to do</div>'
-        }
-      </div>
-    </div>
-
-    <div class="column" data-status="Testing">
-      <div class="column-header">
-        <span>Testing</span>
-        <span class="column-count">${testingTasks.length}</span>
-      </div>
-      <div class="column-content">
-        ${
-          testingTasks.length > 0
-            ? testingTasks.map(renderTask).join("")
-            : '<div class="empty-state">No tasks in testing</div>'
-        }
-      </div>
-    </div>
-
-    <div class="column" data-status="Done">
-      <div class="column-header">
-        <span>Done</span>
-        <span class="column-count">${doneTasks.length}</span>
-      </div>
-      <div class="column-content">
-        ${
-          doneTasks.length > 0
-            ? doneTasks.map(renderTask).join("")
-            : '<div class="empty-state">No completed tasks</div>'
-        }
-      </div>
-    </div>
-
-    <div class="prd-preview-panel" id="prdPanel" style="display: none;">
+    <div class="prd-preview-panel" id="prdPanel" style="display: none; visibility: hidden;">
       <div class="prd-header">
         <span>PRD Preview</span>
-        <button class="close-prd-btn" onclick="closePRD()">×</button>
+        <button class="close-prd-btn" onclick="closePRD()" title="Close PRD Panel">×</button>
       </div>
       <div class="prd-content" id="prdContent">
         <div class="prd-placeholder">Select a task to view its PRD</div>
@@ -703,78 +1457,202 @@ export class KanbanViewProvider {
     </div>
   </div>
 
-  <!-- Reject Modal -->
-  <div class="modal-overlay" id="rejectModal" style="display: none;">
-    <div class="modal">
-      <h3>Reject Task</h3>
-      <p style="margin-bottom: 10px; color: var(--vscode-descriptionForeground);">
-        Provide feedback for the agent. The task will return to To Do.
-      </p>
-      <textarea id="rejectNote" placeholder="What needs to be fixed or changed?"></textarea>
+  <!-- Agent Modal -->
+  <div class="modal-overlay" id="agentModal" style="display: none;">
+    <div class="modal agent-modal">
+      <h3>Send Task to AI Agent</h3>
+
+      <!-- Task Preview -->
+      <div class="task-preview">
+        <strong id="agentModalTaskTitle"></strong>
+        <p id="agentModalTaskDescription"></p>
+      </div>
+
+      <!-- No Providers Warning -->
+      <div class="no-providers-warning" id="noProvidersWarning" style="display: none;">
+        No AI providers configured. Please configure at least one provider via
+        <a href="#" onclick="configureProviders()">Kaiban: Configure AI Providers</a> command.
+      </div>
+
+      <!-- Provider Selection -->
+      <div class="form-group" id="providerSelectGroup">
+        <label for="providerSelect">Provider:</label>
+        <select id="providerSelect" onchange="onProviderChange()">
+          <option value="">Select a provider...</option>
+        </select>
+      </div>
+
+      <!-- Model Selection -->
+      <div class="form-group" id="modelSelectGroup" style="display: none;">
+        <label for="modelSelect">Model:</label>
+        <select id="modelSelect">
+          <option value="">Loading models...</option>
+        </select>
+      </div>
+
+      <!-- Cursor-specific options -->
+      <div class="provider-options" id="cursorOptions" style="display: none;">
+        <label>
+          <input type="checkbox" id="createPR" checked>
+          Auto-create Pull Request when complete
+        </label>
+      </div>
+
+      <!-- Actions -->
       <div class="modal-actions">
-        <button class="modal-btn modal-btn-cancel" onclick="hideRejectModal()">Cancel</button>
-        <button class="modal-btn modal-btn-reject" onclick="submitRejection()">Reject Task</button>
+        <button class="modal-btn modal-btn-cancel" onclick="hideAgentModal()">Cancel</button>
+        <button class="modal-btn modal-btn-send" id="sendToAgentBtn" onclick="confirmSendToAgent()" disabled>
+          Send to Agent
+        </button>
       </div>
     </div>
   </div>
 
   <script>
     const vscode = acquireVsCodeApi();
-    let draggedElement = null;
-    let sortByPriority = true;
-    let currentRejectTaskId = null;
+      let draggedElement = null;
+      let isDragging = false;
+      let currentSortMode = 'default'; // 'default', 'priority-asc', 'priority-desc'
+      let originalTaskOrder = new Map(); // Store original order of tasks per column
 
-    // Reject modal functions
-    function showRejectModal(taskId) {
-      currentRejectTaskId = taskId;
-      document.getElementById('rejectModal').style.display = 'flex';
-      document.getElementById('rejectNote').value = '';
-      document.getElementById('rejectNote').focus();
+    // Agent modal state
+    let currentAgentTaskId = null;
+    let availableProviders = [];
+    let availableModels = [];
+
+    // Agent modal functions
+    function showAgentModal(taskId) {
+      currentAgentTaskId = taskId;
+
+      // Get task card data
+      const card = document.querySelector(\`[data-task-id="\${taskId}"]\`);
+      if (card) {
+        document.getElementById('agentModalTaskTitle').textContent = card.dataset.label || '';
+        document.getElementById('agentModalTaskDescription').textContent = card.dataset.description || 'No description';
+      }
+
+      // Reset form
+      document.getElementById('providerSelect').value = '';
+      document.getElementById('modelSelectGroup').style.display = 'none';
+      document.getElementById('cursorOptions').style.display = 'none';
+      document.getElementById('sendToAgentBtn').disabled = true;
+      document.getElementById('noProvidersWarning').style.display = 'none';
+
+      // Show modal
+      document.getElementById('agentModal').style.display = 'flex';
+
+      // Request available providers
+      vscode.postMessage({ command: 'getAvailableProviders' });
     }
 
-    function hideRejectModal() {
-      document.getElementById('rejectModal').style.display = 'none';
-      currentRejectTaskId = null;
+    function hideAgentModal() {
+      document.getElementById('agentModal').style.display = 'none';
+      currentAgentTaskId = null;
     }
 
-    function submitRejection() {
-      const note = document.getElementById('rejectNote').value.trim();
-      if (!note) {
-        alert('Please provide feedback for the agent.');
+    function onProviderChange() {
+      const provider = document.getElementById('providerSelect').value;
+      const modelGroup = document.getElementById('modelSelectGroup');
+      const cursorOptions = document.getElementById('cursorOptions');
+      const sendBtn = document.getElementById('sendToAgentBtn');
+
+      if (!provider) {
+        modelGroup.style.display = 'none';
+        cursorOptions.style.display = 'none';
+        sendBtn.disabled = true;
         return;
       }
-      if (currentRejectTaskId) {
-        vscode.postMessage({
-          command: 'rejectTask',
-          taskId: currentRejectTaskId,
-          note: note
-        });
-        hideRejectModal();
+
+      // Show/hide Cursor-specific options
+      cursorOptions.style.display = provider === 'cursor' ? 'block' : 'none';
+
+      // For Cursor, no model selection needed (agent mode)
+      if (provider === 'cursor') {
+        modelGroup.style.display = 'none';
+        sendBtn.disabled = false;
+      } else {
+        // Request models for this provider
+        modelGroup.style.display = 'block';
+        document.getElementById('modelSelect').innerHTML = '<option value="">Loading models...</option>';
+        sendBtn.disabled = true;
+        vscode.postMessage({ command: 'getModelsForProvider', provider: provider });
       }
     }
 
-    // Close modal on overlay click
-    document.getElementById('rejectModal').addEventListener('click', (e) => {
-      if (e.target.id === 'rejectModal') {
-        hideRejectModal();
+    function onModelChange() {
+      const model = document.getElementById('modelSelect').value;
+      document.getElementById('sendToAgentBtn').disabled = !model;
+    }
+
+    function confirmSendToAgent() {
+      if (!currentAgentTaskId) return;
+
+      const provider = document.getElementById('providerSelect').value;
+      const model = document.getElementById('modelSelect').value;
+      const createPR = document.getElementById('createPR').checked;
+
+      if (!provider) {
+        alert('Please select a provider.');
+        return;
+      }
+
+      if (provider !== 'cursor' && !model) {
+        alert('Please select a model.');
+        return;
+      }
+
+      // Show loading state
+      const btn = document.getElementById('sendToAgentBtn');
+      btn.disabled = true;
+      btn.innerHTML = 'Sending... <span class="loading-spinner"></span>';
+
+      vscode.postMessage({
+        command: 'sendToAgent',
+        taskId: currentAgentTaskId,
+        provider: provider,
+        model: model || undefined,
+        options: {
+          createPR: createPR
+        }
+      });
+    }
+
+    function configureProviders() {
+      hideAgentModal();
+      vscode.postMessage({ command: 'configureProviders' });
+    }
+
+    // Close agent modal on overlay click
+    document.getElementById('agentModal').addEventListener('click', (e) => {
+      if (e.target.id === 'agentModal') {
+        hideAgentModal();
       }
     });
 
     // Click handler for task cards
     document.addEventListener('click', (e) => {
+      // Ignore clicks if we just finished dragging
+      if (isDragging) {
+        return;
+      }
+
       // Check if clicking on a link within PRD content first
       const link = e.target.closest('a');
       if (link && link.closest('#prdContent')) {
         e.preventDefault();
         e.stopPropagation();
         const href = link.getAttribute('href');
-        
+
         // Check if it's a relative path (not http/https/mailto)
         if (href && !href.match(/^(https?:|mailto:|#)/)) {
           // Load this file in the PRD preview
+          // Try to get task file path from the PRD content's context
+          const prdCard = link.closest('.task-card');
+          const taskFilePath = prdCard ? prdCard.dataset.filepath : undefined;
           vscode.postMessage({
             command: 'loadPRD',
-            prdPath: href
+            prdPath: href,
+            taskFilePath: taskFilePath
           });
         } else if (href && href.match(/^https?:/)) {
           // External links should open in browser
@@ -785,25 +1663,47 @@ export class KanbanViewProvider {
 
       const card = e.target.closest('.task-card');
       if (card) {
-        const filePath = card.dataset.filepath;
         const prdPath = card.dataset.prdPath;
-        
+
         // Remove selection from all cards
         document.querySelectorAll('.task-card').forEach(c => c.classList.remove('selected'));
-        
+
         // Select current card
         card.classList.add('selected');
-        
-        // Show PRD preview if PRD path exists
+
+        // Always show PRD panel when task is selected
+        const board = document.getElementById('kanbanBoard');
+        const panel = document.getElementById('prdPanel');
+        const prdContent = document.getElementById('prdContent');
+
         if (prdPath) {
           showPRDPreview(prdPath);
+        } else {
+          // If no PRD, show panel with placeholder
+          if (board && panel && prdContent) {
+            board.classList.add('with-prd');
+            panel.style.display = 'flex';
+            panel.style.visibility = 'visible';
+            requestAnimationFrame(() => {
+              panel.setAttribute('data-visible', 'true');
+            });
+            prdContent.innerHTML = '<div class="prd-placeholder">This task has no PRD linked</div>';
+          }
         }
-        
-        // Open task file
-        vscode.postMessage({
-          command: 'openTask',
-          filePath: filePath
-        });
+      }
+    });
+
+    // Double-click handler for task cards (opens file)
+    document.addEventListener('dblclick', (e) => {
+      const card = e.target.closest('.task-card');
+      if (card) {
+        const filePath = card.dataset.filepath;
+        if (filePath) {
+          vscode.postMessage({
+            command: 'openTask',
+            filePath: filePath
+          });
+        }
       }
     });
 
@@ -811,6 +1711,7 @@ export class KanbanViewProvider {
     document.addEventListener('dragstart', (e) => {
       const card = e.target.closest('.task-card');
       if (card) {
+        isDragging = true;
         draggedElement = card;
         card.classList.add('dragging');
         e.dataTransfer.effectAllowed = 'move';
@@ -826,6 +1727,8 @@ export class KanbanViewProvider {
       }
       // Remove drag-over class from all columns
       document.querySelectorAll('.column').forEach(col => col.classList.remove('drag-over'));
+      // Reset dragging flag after a short delay to allow drop event to process
+      setTimeout(() => { isDragging = false; }, 100);
     });
 
     document.addEventListener('dragover', (e) => {
@@ -842,12 +1745,12 @@ export class KanbanViewProvider {
     document.addEventListener('drop', (e) => {
       e.preventDefault();
       const column = e.target.closest('.column');
-      
+
       if (column && draggedElement) {
         const newStatus = column.dataset.status;
         const taskId = draggedElement.dataset.taskId;
         const currentStatus = draggedElement.dataset.status;
-        
+
         // Only update if status changed
         if (newStatus !== currentStatus) {
           vscode.postMessage({
@@ -855,8 +1758,10 @@ export class KanbanViewProvider {
             taskId: taskId,
             newStatus: newStatus
           });
+          // Re-store original order after task moves
+          setTimeout(() => storeOriginalOrder(), 100);
         }
-        
+
         // Remove drag-over class
         column.classList.remove('drag-over');
       }
@@ -867,17 +1772,29 @@ export class KanbanViewProvider {
       const board = document.getElementById('kanbanBoard');
       const panel = document.getElementById('prdPanel');
       const content = document.getElementById('prdContent');
-      
+
+      if (!board || !panel) return;
+
       // Add with-prd class to board
       board.classList.add('with-prd');
-      
-      // Show PRD panel
+
+      // Show PRD panel with animation
       panel.style.display = 'flex';
-      
-      // Load PRD content
+      panel.style.visibility = 'visible';
+      // Use requestAnimationFrame to ensure display is applied before setting data attribute
+      requestAnimationFrame(() => {
+        panel.setAttribute('data-visible', 'true');
+      });
+
+      // Get the selected card to find the task file path
+      const selectedCard = document.querySelector('.task-card.selected');
+      const taskFilePath = selectedCard ? selectedCard.dataset.filepath : undefined;
+
+      // Load PRD content with task file path for accurate resolution
       vscode.postMessage({
         command: 'loadPRD',
-        prdPath: prdPath
+        prdPath: prdPath,
+        taskFilePath: taskFilePath
       });
     }
 
@@ -886,18 +1803,27 @@ export class KanbanViewProvider {
       const board = document.getElementById('kanbanBoard');
       const panel = document.getElementById('prdPanel');
       const content = document.getElementById('prdContent');
-      
+
+      if (!board || !panel) return;
+
       // Remove with-prd class from board
       board.classList.remove('with-prd');
-      
-      // Hide PRD panel
-      panel.style.display = 'none';
-      
+
+      // Hide PRD panel with animation
+      panel.setAttribute('data-visible', 'false');
+      // Wait for animation to complete before hiding
+      setTimeout(() => {
+        panel.style.display = 'none';
+        panel.style.visibility = 'hidden';
+      }, 300);
+
       // Clear selection
       document.querySelectorAll('.task-card').forEach(c => c.classList.remove('selected'));
-      
+
       // Reset content
-      content.innerHTML = '<div class="prd-placeholder">Select a task to view its PRD</div>';
+      if (content) {
+        content.innerHTML = '<div class="prd-placeholder">Select a task to view its PRD</div>';
+      }
     }
 
     // Refresh handler
@@ -905,57 +1831,322 @@ export class KanbanViewProvider {
       vscode.postMessage({ command: 'refresh' });
     }
 
-    // Toggle sort handler
-    function toggleSort() {
-      sortByPriority = !sortByPriority;
-      const sortBtn = document.getElementById('sortBtn');
-      
-      if (sortByPriority) {
-        sortBtn.textContent = 'Sort: Priority';
-        sortTasksByPriority();
-      } else {
-        sortBtn.textContent = 'Sort: Default';
-        sortTasksByDefault();
+    // Open settings handler
+    function openSettings() {
+      vscode.postMessage({ command: 'openSettings' });
+    }
+
+    // Sort change handler
+    function onSortChange() {
+      const sortSelect = document.getElementById('sortSelect');
+      if (!(sortSelect instanceof HTMLSelectElement)) return;
+
+      currentSortMode = sortSelect.value;
+
+      switch (currentSortMode) {
+        case 'priority-asc':
+          sortTasksByPriority(true);
+          break;
+        case 'priority-desc':
+          sortTasksByPriority(false);
+          break;
+        case 'name-asc':
+          sortTasksByName(true);
+          break;
+        case 'name-desc':
+          sortTasksByName(false);
+          break;
+        case 'default':
+        default:
+          sortTasksByDefault();
+          break;
       }
     }
 
-    function sortTasksByPriority() {
+    function sortTasksByPriority(ascending: boolean = true) {
       const columns = document.querySelectorAll('.column');
       const priorityOrder = { high: 0, medium: 1, low: 2 };
-      
+
       columns.forEach(column => {
         const content = column.querySelector('.column-content');
+        if (!content) return;
+
         const tasks = Array.from(content.querySelectorAll('.task-card'));
         const emptyState = content.querySelector('.empty-state');
-        
+
         if (tasks.length === 0) return;
-        
+
+        // Sort tasks by priority
         tasks.sort((a, b) => {
-          const aPriority = a.classList.contains('high') ? 'high' : 
-                          a.classList.contains('medium') ? 'medium' : 'low';
-          const bPriority = b.classList.contains('high') ? 'high' : 
-                          b.classList.contains('medium') ? 'medium' : 'low';
-          return priorityOrder[aPriority] - priorityOrder[bPriority];
+          // Get priority from class list (cards have classes: high, medium, or low)
+          let aPriority = 'low';
+          let bPriority = 'low';
+
+          if (a.classList.contains('high')) {
+            aPriority = 'high';
+          } else if (a.classList.contains('medium')) {
+            aPriority = 'medium';
+          }
+
+          if (b.classList.contains('high')) {
+            bPriority = 'high';
+          } else if (b.classList.contains('medium')) {
+            bPriority = 'medium';
+          }
+
+          const diff = priorityOrder[aPriority] - priorityOrder[bPriority];
+          return ascending ? diff : -diff;
         });
-        
-        // Clear and re-append
-        content.innerHTML = '';
-        tasks.forEach(task => content.appendChild(task));
-        if (emptyState) content.appendChild(emptyState);
+
+        // Store empty state node if it exists (detach it first)
+        const emptyStateNode = emptyState ? emptyState.cloneNode(true) : null;
+
+        // Remove all child nodes
+        while (content.firstChild) {
+          content.removeChild(content.firstChild);
+        }
+
+        // Re-append sorted tasks
+        tasks.forEach(task => {
+          content.appendChild(task);
+        });
+
+        // Re-append empty state if it existed
+        if (emptyStateNode) {
+          content.appendChild(emptyStateNode);
+        }
+      });
+    }
+
+    function sortTasksByName(ascending: boolean = true) {
+      const columns = document.querySelectorAll('.column');
+
+      columns.forEach(column => {
+        const content = column.querySelector('.column-content');
+        if (!content) return;
+
+        const tasks = Array.from(content.querySelectorAll('.task-card'));
+        const emptyState = content.querySelector('.empty-state');
+
+        if (tasks.length === 0) return;
+
+        // Sort tasks by name (from data-label or task title)
+        tasks.sort((a, b) => {
+          const aLabel = a.dataset.label || a.querySelector('.task-title')?.textContent || '';
+          const bLabel = b.dataset.label || b.querySelector('.task-title')?.textContent || '';
+          const comparison = aLabel.localeCompare(bLabel, undefined, { sensitivity: 'base' });
+          return ascending ? comparison : -comparison;
+        });
+
+        // Store empty state node if it exists
+        const emptyStateNode = emptyState ? emptyState.cloneNode(true) : null;
+
+        // Remove all child nodes
+        while (content.firstChild) {
+          content.removeChild(content.firstChild);
+        }
+
+        // Re-append sorted tasks
+        tasks.forEach(task => {
+          content.appendChild(task);
+        });
+
+        // Re-append empty state if it existed
+        if (emptyStateNode) {
+          content.appendChild(emptyStateNode);
+        }
       });
     }
 
     function sortTasksByDefault() {
-      // Refresh to get original order
-      refresh();
+      // Restore original order from stored map
+      const columns = document.querySelectorAll('.column');
+
+      columns.forEach(column => {
+        const content = column.querySelector('.column-content');
+        if (!content) return;
+
+        const columnStatus = column.dataset.status;
+        const originalOrder = originalTaskOrder.get(columnStatus);
+
+        // Re-store order if not available (shouldn't happen, but just in case)
+        if (!originalOrder || originalOrder.length === 0) {
+          storeOriginalOrder();
+          const updatedOrder = originalTaskOrder.get(columnStatus);
+          if (!updatedOrder || updatedOrder.length === 0) {
+            return; // Still no order, skip this column
+          }
+          // Use the newly stored order
+          const tasks = Array.from(content.querySelectorAll('.task-card'));
+          if (tasks.length === 0) return;
+          tasks.sort((a, b) => {
+            const aId = a.dataset.taskId;
+            const bId = b.dataset.taskId;
+            const aIndex = updatedOrder.indexOf(aId);
+            const bIndex = updatedOrder.indexOf(bId);
+            return aIndex - bIndex;
+          });
+          const emptyState = content.querySelector('.empty-state');
+          const emptyStateNode = emptyState ? emptyState.cloneNode(true) : null;
+          while (content.firstChild) {
+            content.removeChild(content.firstChild);
+          }
+          tasks.forEach(task => content.appendChild(task));
+          if (emptyStateNode) content.appendChild(emptyStateNode);
+          return;
+        }
+
+        const tasks = Array.from(content.querySelectorAll('.task-card'));
+        const emptyState = content.querySelector('.empty-state');
+
+        if (tasks.length === 0) return;
+
+        // Sort tasks back to original order
+        tasks.sort((a, b) => {
+          const aId = a.dataset.taskId;
+          const bId = b.dataset.taskId;
+          const aIndex = originalOrder.indexOf(aId);
+          const bIndex = originalOrder.indexOf(bId);
+          return aIndex - bIndex;
+        });
+
+        // Store empty state node if it exists
+        const emptyStateNode = emptyState ? emptyState.cloneNode(true) : null;
+
+        // Remove all child nodes
+        while (content.firstChild) {
+          content.removeChild(content.firstChild);
+        }
+
+        // Re-append tasks in original order
+        tasks.forEach(task => {
+          content.appendChild(task);
+        });
+
+        // Re-append empty state if it existed
+        if (emptyStateNode) {
+          content.appendChild(emptyStateNode);
+        }
+      });
     }
 
-    // Handle PRD content updates
+    // Store original task order (call after DOM is ready)
+    function storeOriginalOrder() {
+      const columns = document.querySelectorAll('.column');
+      originalTaskOrder.clear(); // Clear old order
+      columns.forEach(column => {
+        const content = column.querySelector('.column-content');
+        if (!content) return;
+        const columnStatus = column.dataset.status;
+        const tasks = Array.from(content.querySelectorAll('.task-card'));
+        const taskIds = tasks.map(task => task.dataset.taskId);
+        if (taskIds.length > 0) {
+          originalTaskOrder.set(columnStatus, taskIds);
+        }
+      });
+    }
+
+    // Store original order when page loads (use DOMContentLoaded or setTimeout)
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', () => {
+        setTimeout(() => storeOriginalOrder(), 50);
+      });
+    } else {
+      setTimeout(() => storeOriginalOrder(), 50);
+    }
+
+    // Handle messages from extension
     window.addEventListener('message', event => {
       const message = event.data;
-      if (message.command === 'updatePRDContent') {
-        const content = document.getElementById('prdContent');
-        content.innerHTML = \`<div class="prd-markdown">\${message.content}</div>\`;
+      switch (message.command) {
+        case 'updatePRDContent': {
+          const panel = document.getElementById('prdPanel');
+          const board = document.getElementById('kanbanBoard');
+          const content = document.getElementById('prdContent');
+
+          if (panel && content) {
+            // Ensure panel is visible when content is updated
+            panel.style.display = 'flex';
+            panel.style.visibility = 'visible';
+            if (board) {
+              board.classList.add('with-prd');
+            }
+            requestAnimationFrame(() => {
+              panel.setAttribute('data-visible', 'true');
+            });
+            content.innerHTML = \`<div class="prd-markdown">\${message.content}</div>\`;
+          }
+          break;
+        }
+
+        case 'updateAvailableProviders': {
+          availableProviders = message.providers || [];
+          const select = document.getElementById('providerSelect');
+          const warning = document.getElementById('noProvidersWarning');
+          const selectGroup = document.getElementById('providerSelectGroup');
+
+          if (availableProviders.length === 0) {
+            warning.style.display = 'block';
+            selectGroup.style.display = 'none';
+          } else {
+            warning.style.display = 'none';
+            selectGroup.style.display = 'block';
+            select.innerHTML = '<option value="">Select a provider...</option>' +
+              availableProviders.map(p =>
+                \`<option value="\${p.type}">\${p.name}\${p.enabled ? '' : ' (not configured)'}</option>\`
+              ).join('');
+          }
+          break;
+        }
+
+        case 'updateModelsForProvider': {
+          availableModels = message.models || [];
+          const select = document.getElementById('modelSelect');
+          const sendBtn = document.getElementById('sendToAgentBtn');
+
+          if (availableModels.length === 0) {
+            select.innerHTML = '<option value="">No models available</option>';
+            sendBtn.disabled = true;
+          } else {
+            select.innerHTML = availableModels.map(m =>
+              \`<option value="\${m.id}">\${m.name} ($\${m.inputPrice}/M in, $\${m.outputPrice}/M out)</option>\`
+            ).join('');
+            select.onchange = onModelChange;
+            // Auto-select first model
+            if (availableModels.length > 0) {
+              select.value = availableModels[0].id;
+              sendBtn.disabled = false;
+            }
+          }
+          break;
+        }
+
+        case 'agentSendSuccess': {
+          hideAgentModal();
+          // Refresh to show updated task status
+          refresh();
+          break;
+        }
+
+        case 'agentSendError': {
+          const btn = document.getElementById('sendToAgentBtn');
+          btn.disabled = false;
+          btn.textContent = 'Send to Agent';
+          alert('Error: ' + (message.error || 'Failed to send to agent'));
+          break;
+        }
+
+        case 'agentStatusUpdate': {
+          // Update task card with new agent status
+          const card = document.querySelector(\`[data-task-id="\${message.taskId}"]\`);
+          if (card) {
+            // Remove old status classes
+            card.classList.remove('agent-pending', 'agent-running', 'agent-completed', 'agent-error');
+            // Add new status class
+            card.classList.add(\`agent-\${message.status}\`);
+          }
+          break;
+        }
       }
     });
   </script>

@@ -2,12 +2,14 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
 
+import type { ProviderType } from "./types/aiProvider";
+
 export interface Task {
   id: string;
   label: string;
   description: string;
   type: string;
-  status: "Backlog" | "To Do" | "Testing" | "Done";
+  status: "Backlog" | "To Do" | "Doing" | "Testing" | "Done" | "Blocked";
   priority: "High" | "Medium" | "Low";
   created: string;
   updated: string;
@@ -21,6 +23,15 @@ export interface Task {
   completedAt: string;
   rejectionCount: number;
   agentNotes: string;
+  // AI Provider metadata
+  agentProvider?: ProviderType;
+  agentModel?: string;
+  agentId?: string;
+  agentStatus?: "pending" | "running" | "completed" | "error";
+  agentBranchName?: string;
+  agentPrUrl?: string;
+  agentTokensUsed?: number;
+  agentCost?: number;
 }
 
 export class TaskParser {
@@ -110,7 +121,7 @@ export class TaskParser {
       label: String(metadata.label || label),
       description: String(metadata.description || ""),
       type: String(metadata.type || "Task"),
-      status: (metadata.status as Task["status"]) || "Backlog",
+      status: (metadata.status as Task["status"]) || "To Do",
       priority: (metadata.priority as Task["priority"]) || "Medium",
       created: String(metadata.created || ""),
       updated: String(metadata.updated || ""),
@@ -212,8 +223,10 @@ export class TaskParser {
     const grouped: Record<string, Task[]> = {
       Backlog: [],
       "To Do": [],
+      Doing: [],
       Testing: [],
       Done: [],
+      Blocked: [],
     };
 
     for (const task of tasks) {
@@ -252,7 +265,7 @@ export class TaskParser {
    */
   public async updateTaskStatus(
     taskId: string,
-    newStatus: "Backlog" | "To Do" | "Testing" | "Done"
+    newStatus: "Backlog" | "To Do" | "Doing" | "Testing" | "Done" | "Blocked"
   ): Promise<void> {
     const tasks = await this.parseTasks();
     const task = tasks.find((t) => t.id === taskId);
@@ -278,6 +291,90 @@ export class TaskParser {
 
     // Write back to file
     fs.writeFileSync(task.filePath, updatedLines.join("\n"), "utf-8");
+
+    // Also update PRD file status if it exists
+    if (task.prdPath) {
+      await this.updatePRDStatus(task.filePath, task.prdPath, newStatus);
+    }
+  }
+
+  /**
+   * Update PRD file status to sync with task status
+   */
+  private async updatePRDStatus(
+    taskFilePath: string,
+    prdPath: string,
+    newStatus: "Backlog" | "To Do" | "Doing" | "Testing" | "Done" | "Blocked"
+  ): Promise<void> {
+    try {
+      // Resolve PRD path relative to task file
+      const taskDir = path.dirname(taskFilePath);
+      let resolvedPrdPath: string;
+
+      // Handle relative paths
+      if (prdPath.startsWith("../") || prdPath.startsWith("./")) {
+        resolvedPrdPath = path.resolve(taskDir, prdPath);
+      } else if (path.isAbsolute(prdPath)) {
+        resolvedPrdPath = prdPath;
+      } else {
+        // Try resolving from workspace root
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (workspaceFolders && workspaceFolders.length > 0) {
+          const config = vscode.workspace.getConfiguration("kaiban.prd");
+          const basePath = config.get<string>("basePath", ".agent/PRDS");
+          resolvedPrdPath = path.resolve(workspaceFolders[0].uri.fsPath, basePath, prdPath);
+        } else {
+          resolvedPrdPath = path.resolve(taskDir, prdPath);
+        }
+      }
+
+      // Check if PRD file exists
+      if (!fs.existsSync(resolvedPrdPath)) {
+        // PRD file doesn't exist, skip silently
+        return;
+      }
+
+      // Read PRD file content
+      const prdContent = fs.readFileSync(resolvedPrdPath, "utf-8");
+      const prdLines = prdContent.split("\n");
+
+      // Check if PRD has a status field
+      const hasStatusField = prdLines.some((line) => line.match(/^\*\*Status:\*\*/i));
+
+      if (hasStatusField) {
+        // Update existing status field
+        const updatedPrdLines = prdLines.map((line) => {
+          if (line.match(/^\*\*Status:\*\*/i)) {
+            return `**Status:** ${newStatus}`;
+          }
+          return line;
+        });
+        fs.writeFileSync(resolvedPrdPath, updatedPrdLines.join("\n"), "utf-8");
+      } else {
+        // PRD doesn't have status field - optionally add it after the title
+        // Find the first heading or add after first line
+        let insertIndex = 1;
+        for (let i = 0; i < prdLines.length; i++) {
+          if (prdLines[i].startsWith("#")) {
+            insertIndex = i + 1;
+            break;
+          }
+        }
+
+        // Insert status field after title
+        const updatedPrdLines = [
+          ...prdLines.slice(0, insertIndex),
+          "",
+          `**Status:** ${newStatus}`,
+          ...prdLines.slice(insertIndex),
+        ];
+        fs.writeFileSync(resolvedPrdPath, updatedPrdLines.join("\n"), "utf-8");
+      }
+    } catch (error) {
+      // Silently fail if PRD update fails (PRD might not exist or be accessible)
+      // Log for debugging but don't throw
+      console.warn(`Failed to update PRD status: ${error}`);
+    }
   }
 
   /**
