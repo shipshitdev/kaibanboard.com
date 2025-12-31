@@ -15,6 +15,7 @@ export class KanbanViewProvider {
   private taskParser: TaskParser;
   private providerRegistry: ProviderRegistry;
   private pollingIntervals: Map<string, NodeJS.Timeout> = new Map();
+  private skipNextConfigRefresh = false;
 
   constructor(
     private context: vscode.ExtensionContext,
@@ -47,7 +48,12 @@ export class KanbanViewProvider {
     vscode.workspace.onDidChangeConfiguration(
       (e) => {
         if (e.affectsConfiguration("kaiban.columns.enabled")) {
-          // Auto-refresh the board when columns change
+          // Skip refresh if the change came from the webview (UI already updated)
+          if (this.skipNextConfigRefresh) {
+            this.skipNextConfigRefresh = false;
+            return;
+          }
+          // Auto-refresh the board when columns change from external source
           this.refresh();
         }
       },
@@ -107,6 +113,9 @@ export class KanbanViewProvider {
             break;
           case "sendToAgent":
             await this.handleSendToAgent(message.taskId, message.provider, message.model);
+            break;
+          case "saveColumnSettings":
+            await this.saveColumnSettings(message.columns);
             break;
         }
       },
@@ -268,6 +277,19 @@ export class KanbanViewProvider {
       vscode.window.showInformationMessage(`Task rejected and moved back to To Do`);
     } catch (error) {
       vscode.window.showErrorMessage(`Failed to reject task: ${error}`);
+    }
+  }
+
+  private async saveColumnSettings(columns: string[]) {
+    try {
+      // Set flag to skip the config change refresh (UI already updated)
+      this.skipNextConfigRefresh = true;
+      const config = vscode.workspace.getConfiguration("kaiban.columns");
+      await config.update("enabled", columns, vscode.ConfigurationTarget.Workspace);
+    } catch (error) {
+      // Silently fail - the UI already updated instantly
+      console.error("Failed to save column settings:", error);
+      this.skipNextConfigRefresh = false;
     }
   }
 
@@ -567,6 +589,9 @@ export class KanbanViewProvider {
     groupedTasks: Record<string, Task[]>,
     hasAnyApiKey: boolean = false
   ): Promise<string> {
+    // All possible columns
+    const allColumns = ["Backlog", "To Do", "Doing", "Testing", "Done", "Blocked"];
+
     // Get configured columns from settings
     const config = vscode.workspace.getConfiguration("kaiban.columns");
     const enabledColumns = config.get<string[]>("enabled", ["To Do", "Doing", "Testing", "Done"]);
@@ -577,13 +602,16 @@ export class KanbanViewProvider {
       return tasks.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
     };
 
-    // Sort tasks for each enabled column
+    // Sort tasks for ALL columns (not just enabled ones)
     const columnTasks: Record<string, Task[]> = {};
     let totalTasks = 0;
-    for (const column of enabledColumns) {
-      const sorted = sortByPriority(groupedTasks[column] || []);
+    for (const column of allColumns) {
+      const sorted = sortByPriority([...(groupedTasks[column] || [])]);
       columnTasks[column] = sorted;
-      totalTasks += sorted.length;
+      // Only count tasks in enabled columns for isEmpty check
+      if (enabledColumns.includes(column)) {
+        totalTasks += sorted.length;
+      }
     }
 
     const isEmpty = totalTasks === 0;
@@ -752,7 +780,7 @@ export class KanbanViewProvider {
 
     .board {
       display: grid;
-      grid-template-columns: repeat(${enabledColumns.length}, 1fr);
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
       gap: 12px;
       height: calc(100vh - 100px);
       position: relative;
@@ -771,6 +799,84 @@ export class KanbanViewProvider {
       flex-direction: column;
       min-height: 0;
       border-left: 4px solid transparent;
+      transition: opacity 0.2s, transform 0.2s;
+    }
+
+    .column.hidden {
+      display: none;
+    }
+
+    /* Settings dropdown */
+    .settings-dropdown {
+      position: relative;
+      display: inline-block;
+    }
+
+    .settings-panel {
+      position: absolute;
+      top: 100%;
+      right: 0;
+      margin-top: 4px;
+      background: var(--vscode-dropdown-background);
+      border: 1px solid var(--vscode-dropdown-border);
+      border-radius: 6px;
+      padding: 12px;
+      min-width: 180px;
+      z-index: 1000;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+      display: none;
+    }
+
+    .settings-panel.open {
+      display: block;
+    }
+
+    .settings-panel h4 {
+      margin: 0 0 10px 0;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--vscode-descriptionForeground);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .column-toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 0;
+      cursor: pointer;
+      font-size: 13px;
+    }
+
+    .column-toggle:hover {
+      color: var(--vscode-textLink-foreground);
+    }
+
+    .column-toggle input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      cursor: pointer;
+      accent-color: var(--vscode-button-background);
+    }
+
+    .settings-divider {
+      height: 1px;
+      background: var(--vscode-panel-border);
+      margin: 10px 0;
+    }
+
+    .settings-link {
+      display: block;
+      padding: 6px 0;
+      font-size: 13px;
+      color: var(--vscode-textLink-foreground);
+      cursor: pointer;
+      text-decoration: none;
+    }
+
+    .settings-link:hover {
+      text-decoration: underline;
     }
 
     .column[data-status="Backlog"] {
@@ -1364,9 +1470,28 @@ export class KanbanViewProvider {
           <option value="name-asc">Name A-Z</option>
           <option value="name-desc">Name Z-A</option>
         </select>
-        <button class="action-btn secondary-btn icon-btn" onclick="openSettings()" title="Open Settings">
-          ${Icons.settings(16)}
-        </button>
+        <div class="settings-dropdown">
+          <button class="action-btn secondary-btn icon-btn" onclick="toggleSettingsPanel(event)" title="Settings">
+            ${Icons.settings(16)}
+          </button>
+          <div class="settings-panel" id="settingsPanel" onclick="event.stopPropagation()">
+            <h4>Columns</h4>
+            ${allColumns
+              .map(
+                (col) => `
+            <label class="column-toggle" onclick="event.stopPropagation()">
+              <input type="checkbox"
+                     data-column="${col}"
+                     ${enabledColumns.includes(col) ? "checked" : ""}
+                     onchange="event.stopPropagation(); toggleColumn('${col}', this.checked)">
+              ${col}
+            </label>`
+              )
+              .join("")}
+            <div class="settings-divider"></div>
+            <a class="settings-link" onclick="openSettings()">More Settings...</a>
+          </div>
+        </div>
         <button class="action-btn secondary-btn icon-btn" onclick="refresh()" title="Refresh">
           ${Icons.refresh(16)}
         </button>
@@ -1413,10 +1538,11 @@ Your task details here...</code></pre>
     </div>
         `
         : `
-${enabledColumns
+${allColumns
   .map((column) => {
     const tasks = columnTasks[column] || [];
     const columnClass = column.toLowerCase().replace(/\s+/g, "-");
+    const isHidden = !enabledColumns.includes(column);
     const emptyMessages: Record<string, string> = {
       Backlog: "No tasks in backlog",
       "To Do": "No tasks to do",
@@ -1428,7 +1554,7 @@ ${enabledColumns
     const emptyMessage = emptyMessages[column] || `No tasks in ${column}`;
 
     return `
-    <div class="column column-${columnClass}" data-status="${column}">
+    <div class="column column-${columnClass}${isHidden ? " hidden" : ""}" data-status="${column}">
       <div class="column-header">
         <span>${column}</span>
         <span class="column-count">${tasks.length}</span>
@@ -1833,7 +1959,64 @@ ${enabledColumns
 
     // Open settings handler
     function openSettings() {
+      closeSettingsPanel();
       vscode.postMessage({ command: 'openSettings' });
+    }
+
+    // Settings panel toggle
+    function toggleSettingsPanel(event) {
+      event.stopPropagation();
+      const panel = document.getElementById('settingsPanel');
+      if (panel) {
+        panel.classList.toggle('open');
+      }
+    }
+
+    function closeSettingsPanel() {
+      const panel = document.getElementById('settingsPanel');
+      if (panel) {
+        panel.classList.remove('open');
+      }
+    }
+
+    // Stop propagation on settings panel to prevent closing
+    document.getElementById('settingsPanel').addEventListener('click', (e) => {
+      e.stopPropagation();
+    });
+
+    // Close settings panel when clicking outside
+    document.addEventListener('click', (e) => {
+      const settingsBtn = e.target.closest('.settings-dropdown > button');
+      if (settingsBtn) return; // Don't close when clicking the toggle button
+
+      const settingsPanel = document.getElementById('settingsPanel');
+      if (settingsPanel && !settingsPanel.contains(e.target)) {
+        closeSettingsPanel();
+      }
+    });
+
+    // Toggle column visibility instantly
+    function toggleColumn(columnName, isVisible) {
+      const column = document.querySelector(\`.column[data-status="\${columnName}"]\`);
+      if (column) {
+        if (isVisible) {
+          column.classList.remove('hidden');
+        } else {
+          column.classList.add('hidden');
+        }
+      }
+
+      // Save to VS Code settings in background (don't wait)
+      const enabledColumns = [];
+      document.querySelectorAll('.column-toggle input[type="checkbox"]').forEach(checkbox => {
+        if (checkbox.checked) {
+          enabledColumns.push(checkbox.dataset.column);
+        }
+      });
+      vscode.postMessage({
+        command: 'saveColumnSettings',
+        columns: enabledColumns
+      });
     }
 
     // Sort change handler
@@ -1863,7 +2046,7 @@ ${enabledColumns
       }
     }
 
-    function sortTasksByPriority(ascending: boolean = true) {
+    function sortTasksByPriority(ascending) {
       const columns = document.querySelectorAll('.column');
       const priorityOrder = { high: 0, medium: 1, low: 2 };
 
@@ -1918,7 +2101,7 @@ ${enabledColumns
       });
     }
 
-    function sortTasksByName(ascending: boolean = true) {
+    function sortTasksByName(ascending) {
       const columns = document.querySelectorAll('.column');
 
       columns.forEach(column => {
@@ -2079,7 +2262,7 @@ ${enabledColumns
           break;
         }
 
-        case 'updateAvailableProviders': {
+        case 'availableProviders': {
           availableProviders = message.providers || [];
           const select = document.getElementById('providerSelect');
           const warning = document.getElementById('noProvidersWarning');
