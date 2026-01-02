@@ -156,7 +156,7 @@ When you're happy with it:
 
 ```bash
 cd kaiban.md
-npm install -g @vscode/vsce
+bun install -g @vscode/vsce
 vsce package
 code --install-extension kaiban-md-0.1.0.vsix
 ```
