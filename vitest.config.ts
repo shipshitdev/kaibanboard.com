@@ -11,12 +11,10 @@ export default defineConfig({
       include: ["src/**/*.ts"],
       exclude: ["src/**/*.test.ts", "src/**/*.d.ts", "src/test/**"],
       thresholds: {
-        // Temporarily lowered for AI provider integration and test fixes
-        // TODO: Increase thresholds as more tests are added
-        lines: 49,
-        functions: 55,
-        branches: 40,
-        statements: 49,
+        lines: 100,
+        functions: 100,
+        branches: 100,
+        statements: 100,
       },
     },
     setupFiles: ["./src/test/setup.ts"],

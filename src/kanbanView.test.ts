@@ -12,6 +12,9 @@ const mockGroupByStatus = vi.fn().mockReturnValue({
 });
 const mockUpdateTaskStatus = vi.fn();
 const mockRejectTask = vi.fn();
+const mockGetAvailableProviders = vi.fn().mockResolvedValue([]);
+const mockGetAdapter = vi.fn();
+const mockGetEnabledAdapters = vi.fn().mockResolvedValue([]);
 
 // Mock TaskParser before importing KanbanViewProvider
 vi.mock("./taskParser", () => ({
@@ -27,22 +30,36 @@ vi.mock("./taskParser", () => ({
 vi.mock("./services/providerRegistry", () => ({
   ProviderRegistry: class {
     registerAdapter = vi.fn();
-    getEnabledAdapters = vi.fn().mockResolvedValue([]);
+    getEnabledAdapters = mockGetEnabledAdapters;
+    getAvailableProviders = mockGetAvailableProviders;
+    getAdapter = mockGetAdapter;
   },
 }));
 
 // Mock adapter imports to prevent vscode import issues
 vi.mock("./adapters/openrouterAdapter", () => ({
-  OpenRouterAdapter: class {},
+  OpenRouterAdapter: class {
+    constructor(private readonly getApiKey: () => Promise<string | undefined>) {}
+    probe = () => this.getApiKey();
+  },
 }));
 vi.mock("./adapters/openaiAdapter", () => ({
-  OpenAIAdapter: class {},
+  OpenAIAdapter: class {
+    constructor(private readonly getApiKey: () => Promise<string | undefined>) {}
+    probe = () => this.getApiKey();
+  },
 }));
 vi.mock("./adapters/cursorCloudAdapter", () => ({
-  CursorCloudAdapter: class {},
+  CursorCloudAdapter: class {
+    constructor(private readonly getApiKey: () => Promise<string | undefined>) {}
+    probe = () => this.getApiKey();
+  },
 }));
 vi.mock("./adapters/replicateAdapter", () => ({
-  ReplicateAdapter: class {},
+  ReplicateAdapter: class {
+    constructor(private readonly getApiKey: () => Promise<string | undefined>) {}
+    probe = () => this.getApiKey();
+  },
 }));
 
 import { KanbanViewProvider } from "./kanbanView";
@@ -53,6 +70,26 @@ describe("KanbanViewProvider", () => {
   let mockPanel: vscode.WebviewPanel;
   let mockWebview: vscode.Webview;
   let messageHandler: (message: unknown) => Promise<void>;
+  const buildTask = (overrides: Partial<Task> = {}): Task => ({
+    id: "task-1",
+    label: "Task",
+    status: "To Do",
+    priority: "Medium",
+    type: "Feature",
+    description: "",
+    created: "",
+    updated: "",
+    prdPath: "",
+    filePath: "/path/to/task.md",
+    completed: false,
+    project: "test",
+    claimedBy: "",
+    claimedAt: "",
+    completedAt: "",
+    rejectionCount: 0,
+    agentNotes: "",
+    ...overrides,
+  });
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -67,6 +104,9 @@ describe("KanbanViewProvider", () => {
     });
     mockUpdateTaskStatus.mockClear().mockResolvedValue(undefined);
     mockRejectTask.mockClear().mockResolvedValue(undefined);
+    mockGetAvailableProviders.mockClear().mockResolvedValue([]);
+    mockGetAdapter.mockClear();
+    mockGetEnabledAdapters.mockClear().mockResolvedValue([]);
 
     // Re-setup vscode mocks after clearAllMocks
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
@@ -199,6 +239,29 @@ describe("KanbanViewProvider", () => {
       await provider.show();
     });
 
+    describe("constructor", () => {
+      it("registers adapters when apiKeyManager is provided", async () => {
+        const apiKeyManager = {
+          getApiKey: vi.fn().mockResolvedValue("token"),
+        };
+        const newProvider = new KanbanViewProvider(
+          mockContext,
+          apiKeyManager as unknown as { getApiKey: (type: string) => Promise<string | undefined> }
+        );
+        const registry = newProvider as unknown as {
+          providerRegistry: { registerAdapter: Mock };
+        };
+
+        const adapters = registry.providerRegistry.registerAdapter.mock.calls.map(
+          (call) => call[0] as { probe: () => Promise<string | undefined> }
+        );
+        await Promise.all(adapters.map((adapter) => adapter.probe()));
+
+        expect(registry.providerRegistry.registerAdapter).toHaveBeenCalledTimes(4);
+        expect(apiKeyManager.getApiKey).toHaveBeenCalledTimes(4);
+      });
+    });
+
     describe("openTask command", () => {
       it("should open task file successfully", async () => {
         (vscode.workspace.openTextDocument as Mock).mockResolvedValue({});
@@ -231,6 +294,23 @@ describe("KanbanViewProvider", () => {
       });
     });
 
+    describe("saveColumnSettings command", () => {
+      it("should update column settings", async () => {
+        const updateSpy = vi.fn().mockResolvedValue(undefined);
+        vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({
+          update: updateSpy,
+        } as unknown as vscode.WorkspaceConfiguration);
+
+        await messageHandler({ command: "saveColumnSettings", columns: ["To Do"] });
+
+        expect(updateSpy).toHaveBeenCalledWith(
+          "enabled",
+          ["To Do"],
+          vscode.ConfigurationTarget.Workspace
+        );
+      });
+    });
+
     describe("loadPRD command", () => {
       it("should load PRD content successfully", async () => {
         vi.mocked(vscode.workspace).workspaceFolders = [
@@ -246,6 +326,127 @@ describe("KanbanViewProvider", () => {
         expect(mockWebview.postMessage).toHaveBeenCalledWith({
           command: "updatePRDContent",
           content: expect.stringContaining("PRD Content"),
+        });
+      });
+
+      it("should resolve PRD path containing base path directory", async () => {
+        vi.mocked(vscode.workspace).workspaceFolders = [
+          { uri: { fsPath: "/workspace" } },
+        ] as unknown as readonly vscode.WorkspaceFolder[];
+
+        (vscode.workspace.openTextDocument as Mock).mockResolvedValue({
+          getText: () => "# Found PRD",
+        });
+
+        await messageHandler({
+          command: "loadPRD",
+          prdPath: "../../PRDS/specs/prd.md",
+        });
+
+        expect(mockWebview.postMessage).toHaveBeenCalledWith({
+          command: "updatePRDContent",
+          content: expect.stringContaining("Found PRD"),
+        });
+      });
+
+      it("should resolve PRD path with base path segment only", async () => {
+        vi.mocked(vscode.workspace).workspaceFolders = [
+          { uri: { fsPath: "/workspace" } },
+        ] as unknown as readonly vscode.WorkspaceFolder[];
+
+        (vscode.workspace.openTextDocument as Mock).mockResolvedValue({
+          getText: () => "# Base Path PRD",
+        });
+
+        await messageHandler({
+          command: "loadPRD",
+          prdPath: "../PRDS",
+        });
+
+        expect(mockWebview.postMessage).toHaveBeenCalledWith({
+          command: "updatePRDContent",
+          content: expect.stringContaining("Base Path PRD"),
+        });
+      });
+
+      it("should resolve simple relative PRD paths", async () => {
+        vi.mocked(vscode.workspace).workspaceFolders = [
+          { uri: { fsPath: "/workspace" } },
+        ] as unknown as readonly vscode.WorkspaceFolder[];
+
+        (vscode.workspace.openTextDocument as Mock).mockResolvedValue({
+          getText: () => "# Simple PRD",
+        });
+
+        await messageHandler({
+          command: "loadPRD",
+          prdPath: "docs/prd.md",
+        });
+
+        expect(mockWebview.postMessage).toHaveBeenCalledWith({
+          command: "updatePRDContent",
+          content: expect.stringContaining("Simple PRD"),
+        });
+      });
+
+      it("should fall back to task file path when base path lookup fails", async () => {
+        vi.mocked(vscode.workspace).workspaceFolders = [
+          { uri: { fsPath: "/workspace" } },
+        ] as unknown as readonly vscode.WorkspaceFolder[];
+
+        (vscode.workspace.openTextDocument as Mock)
+          .mockRejectedValueOnce(new Error("Not found"))
+          .mockResolvedValueOnce({
+            getText: () => "# Fallback PRD",
+          });
+
+        await messageHandler({
+          command: "loadPRD",
+          prdPath: "./prd/test.md",
+          taskFilePath: "/workspace/.agent/TASKS/task.md",
+        });
+
+        expect(mockWebview.postMessage).toHaveBeenCalledWith({
+          command: "updatePRDContent",
+          content: expect.stringContaining("Fallback PRD"),
+        });
+      });
+
+      it("should keep searching when PRD content is empty across strategies", async () => {
+        vi.mocked(vscode.workspace).workspaceFolders = [
+          { uri: { fsPath: "/workspace" } },
+        ] as unknown as readonly vscode.WorkspaceFolder[];
+
+        (vscode.workspace.openTextDocument as Mock).mockResolvedValue({
+          getText: () => "",
+        });
+
+        await messageHandler({
+          command: "loadPRD",
+          prdPath: "./prd/test.md",
+          taskFilePath: "/workspace/.agent/TASKS/task.md",
+        });
+
+        expect(vscode.workspace.openTextDocument).toHaveBeenCalledTimes(3);
+        expect(mockWebview.postMessage).toHaveBeenCalledWith({
+          command: "updatePRDContent",
+          content: expect.stringContaining("not found"),
+        });
+      });
+
+      it("should handle absolute PRD paths without workspace fallback", async () => {
+        vi.mocked(vscode.workspace).workspaceFolders = [
+          { uri: { fsPath: "/workspace" } },
+        ] as unknown as readonly vscode.WorkspaceFolder[];
+
+        (vscode.workspace.openTextDocument as Mock).mockRejectedValue(new Error("Not found"));
+
+        await messageHandler({ command: "loadPRD", prdPath: "/tmp/prd.md" });
+
+        expect(vscode.workspace.openTextDocument).toHaveBeenCalledTimes(1);
+        expect(mockWebview.postMessage).toHaveBeenCalledWith({
+          command: "updatePRDContent",
+          content: expect.stringContaining("not found"),
         });
       });
 
@@ -297,14 +498,15 @@ describe("KanbanViewProvider", () => {
           { uri: { fsPath: "/workspace" } },
         ] as unknown as readonly vscode.WorkspaceFolder[];
 
-        // Mock openTextDocument to throw an error (file not found)
-        (vscode.workspace.openTextDocument as Mock).mockRejectedValue(new Error("File not found"));
+        vi.mocked(vscode.workspace.getConfiguration).mockImplementation(() => {
+          throw new Error("Config error");
+        });
 
         await messageHandler({ command: "loadPRD", prdPath: "./prd/test.md" });
 
         expect(mockWebview.postMessage).toHaveBeenCalledWith({
           command: "updatePRDContent",
-          content: expect.stringContaining("not found"),
+          content: expect.stringContaining("Error loading PRD"),
         });
       });
     });
@@ -333,6 +535,39 @@ describe("KanbanViewProvider", () => {
 
         expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
           expect.stringContaining("Failed to update task status")
+        );
+      });
+    });
+
+    describe("rejectTask", () => {
+      it("should reject task and show confirmation", async () => {
+        mockRejectTask.mockResolvedValue(undefined);
+        const refreshSpy = vi.spyOn(provider, "refresh").mockResolvedValue(undefined);
+
+        const internal = provider as unknown as {
+          rejectTask: (taskId: string, note: string) => Promise<void>;
+        };
+
+        await internal.rejectTask("task-001", "Needs revision");
+
+        expect(mockRejectTask).toHaveBeenCalledWith("task-001", "Needs revision");
+        expect(refreshSpy).toHaveBeenCalled();
+        expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+          "Task rejected and moved back to To Do"
+        );
+      });
+
+      it("should show error message when rejection fails", async () => {
+        mockRejectTask.mockRejectedValue(new Error("Reject failed"));
+
+        const internal = provider as unknown as {
+          rejectTask: (taskId: string, note: string) => Promise<void>;
+        };
+
+        await internal.rejectTask("task-001", "Needs revision");
+
+        expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+          "Failed to reject task: Error: Reject failed"
         );
       });
     });
@@ -367,6 +602,287 @@ describe("KanbanViewProvider", () => {
         expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
           expect.stringContaining("Failed to reject task")
         );
+      });
+    });
+
+    describe("openSettings command", () => {
+      it("should execute PRD path configuration command", async () => {
+        await messageHandler({ command: "openSettings" });
+        expect(vscode.commands.executeCommand).toHaveBeenCalledWith("kaiban.configurePRDPath");
+      });
+    });
+
+    describe("getAvailableProviders command", () => {
+      it("should post available providers to webview", async () => {
+        mockGetAvailableProviders.mockResolvedValueOnce([
+          { id: "openai", name: "OpenAI", type: "openai", enabled: true },
+        ]);
+
+        await messageHandler({ command: "getAvailableProviders" });
+
+        expect(mockWebview.postMessage).toHaveBeenCalledWith({
+          command: "availableProviders",
+          providers: [{ id: "openai", name: "OpenAI", type: "openai", enabled: true }],
+        });
+      });
+
+      it("should post error when providers cannot be loaded", async () => {
+        mockGetAvailableProviders.mockRejectedValueOnce(new Error("Failed"));
+
+        await messageHandler({ command: "getAvailableProviders" });
+
+        expect(mockWebview.postMessage).toHaveBeenCalledWith({
+          command: "providerError",
+          error: "Error: Failed",
+        });
+      });
+    });
+
+    describe("getModelsForProvider command", () => {
+      it("should post error when provider is missing", async () => {
+        mockGetAdapter.mockReturnValueOnce(undefined);
+
+        await messageHandler({ command: "getModelsForProvider", provider: "openai" });
+
+        expect(mockWebview.postMessage).toHaveBeenCalledWith({
+          command: "updateModelsForProvider",
+          models: [],
+          error: "Error: Provider openai not found",
+        });
+      });
+
+      it("should post models for provider", async () => {
+        const adapter = {
+          getAvailableModels: vi.fn().mockResolvedValue([{ id: "model-1" }]),
+        };
+        mockGetAdapter.mockReturnValueOnce(adapter);
+
+        await messageHandler({ command: "getModelsForProvider", provider: "openai" });
+
+        expect(mockWebview.postMessage).toHaveBeenCalledWith({
+          command: "updateModelsForProvider",
+          provider: "openai",
+          models: [{ id: "model-1" }],
+        });
+      });
+    });
+
+    describe("prepareAgentPrompt command", () => {
+      it("should show error when task is missing", async () => {
+        mockParseTasks.mockResolvedValueOnce([]);
+
+        await messageHandler({ command: "prepareAgentPrompt", taskId: "missing" });
+
+        expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+          "Error preparing agent: Error: Task missing not found"
+        );
+      });
+
+      it("should show error when task is claimed", async () => {
+        mockParseTasks.mockResolvedValueOnce([buildTask({ claimedBy: "cursor" })]);
+
+        await messageHandler({ command: "prepareAgentPrompt", taskId: "task-1" });
+
+        expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+          "Error preparing agent: Error: Task is already claimed by cursor"
+        );
+      });
+
+      it("should post agent modal data with PRD content", async () => {
+        const task = buildTask({ prdPath: "./prd/test.md", agentNotes: "Note" });
+        mockParseTasks.mockResolvedValueOnce([task]);
+        mockGetAvailableProviders.mockResolvedValueOnce([
+          { id: "openai", name: "OpenAI", type: "openai", enabled: true },
+        ]);
+        vi.mocked(vscode.workspace).workspaceFolders = [
+          { uri: { fsPath: "/workspace" } },
+        ] as unknown as readonly vscode.WorkspaceFolder[];
+        (vscode.workspace.openTextDocument as Mock).mockResolvedValue({
+          getText: () => "# PRD",
+        });
+
+        await messageHandler({ command: "prepareAgentPrompt", taskId: "task-1" });
+
+        expect(mockWebview.postMessage).toHaveBeenCalledWith({
+          command: "showAgentModal",
+          task: expect.objectContaining({ id: "task-1", prdContent: "# PRD" }),
+          providers: [{ id: "openai", name: "OpenAI", type: "openai", enabled: true }],
+        });
+      });
+
+      it("should post agent modal data when no PRD path", async () => {
+        const task = buildTask({ prdPath: "" });
+        mockParseTasks.mockResolvedValueOnce([task]);
+        mockGetAvailableProviders.mockResolvedValueOnce([
+          { id: "openai", name: "OpenAI", type: "openai", enabled: true },
+        ]);
+
+        await messageHandler({ command: "prepareAgentPrompt", taskId: "task-1" });
+
+        expect(mockWebview.postMessage).toHaveBeenCalledWith({
+          command: "showAgentModal",
+          task: expect.objectContaining({ id: "task-1", prdContent: "" }),
+          providers: [{ id: "openai", name: "OpenAI", type: "openai", enabled: true }],
+        });
+      });
+    });
+
+    describe("sendToAgent command", () => {
+      it("should post error when task is missing", async () => {
+        mockParseTasks.mockResolvedValueOnce([]);
+
+        await messageHandler({ command: "sendToAgent", taskId: "missing", provider: "openai" });
+
+        expect(mockWebview.postMessage).toHaveBeenCalledWith({
+          command: "agentSendError",
+          taskId: "missing",
+          error: "Error: Task missing not found",
+        });
+      });
+
+      it("should post error when task already claimed", async () => {
+        mockParseTasks.mockResolvedValueOnce([buildTask({ claimedBy: "cursor" })]);
+
+        await messageHandler({ command: "sendToAgent", taskId: "task-1", provider: "openai" });
+
+        expect(mockWebview.postMessage).toHaveBeenCalledWith({
+          command: "agentSendError",
+          taskId: "task-1",
+          error: "Error: Task is already claimed by cursor",
+        });
+      });
+
+      it("should post error when adapter is missing", async () => {
+        mockParseTasks.mockResolvedValueOnce([buildTask()]);
+        mockGetAdapter.mockReturnValueOnce(undefined);
+
+        await messageHandler({ command: "sendToAgent", taskId: "task-1", provider: "openai" });
+
+        expect(mockWebview.postMessage).toHaveBeenCalledWith({
+          command: "agentSendError",
+          taskId: "task-1",
+          error: "Error: Provider openai not available",
+        });
+      });
+
+      it("should post error when adapter returns error response", async () => {
+        mockParseTasks.mockResolvedValueOnce([buildTask()]);
+        const adapter = {
+          displayName: "OpenAI",
+          supportsAgentMode: false,
+          sendTask: vi.fn().mockResolvedValue({
+            id: "",
+            status: "error",
+            provider: "openai",
+            error: "API down",
+          }),
+        };
+        mockGetAdapter.mockReturnValueOnce(adapter);
+
+        await messageHandler({ command: "sendToAgent", taskId: "task-1", provider: "openai" });
+
+        expect(mockWebview.postMessage).toHaveBeenCalledWith({
+          command: "agentSendError",
+          taskId: "task-1",
+          error: "API down",
+        });
+      });
+
+      it("should send task and notify success", async () => {
+        vi.useFakeTimers();
+        mockParseTasks.mockResolvedValueOnce([buildTask({ status: "Doing" })]);
+        const adapter = {
+          displayName: "Cursor",
+          supportsAgentMode: true,
+          sendTask: vi.fn().mockResolvedValue({
+            id: "agent-1",
+            status: "completed",
+            provider: "cursor",
+            branchName: "cursor-agent/task",
+          }),
+          checkStatus: vi.fn().mockResolvedValue({
+            id: "agent-1",
+            status: "completed",
+            provider: "cursor",
+            prUrl: "https://example.com/pr",
+          }),
+        };
+        mockGetAdapter.mockReturnValue(adapter);
+        (vscode.window.showInformationMessage as Mock).mockResolvedValue("View PR");
+
+        await messageHandler({
+          command: "sendToAgent",
+          taskId: "task-1",
+          provider: "cursor",
+          model: "cursor-agent",
+        });
+
+        vi.advanceTimersByTime(30000);
+        await vi.runOnlyPendingTimersAsync();
+
+        expect(mockWebview.postMessage).toHaveBeenCalledWith({
+          command: "agentSendSuccess",
+          taskId: "task-1",
+          agentId: "agent-1",
+          provider: "cursor",
+          model: "cursor-agent",
+        });
+        expect(vscode.env.openExternal).toHaveBeenCalled();
+        vi.useRealTimers();
+      });
+
+      it("should include PRD content when sending to agent", async () => {
+        const loadSpy = vi
+          .spyOn(
+            provider as unknown as { loadPRDContentRaw: (path: string) => Promise<string> },
+            "loadPRDContentRaw"
+          )
+          .mockResolvedValueOnce("PRD content");
+        mockParseTasks.mockResolvedValueOnce([buildTask({ status: "Doing", prdPath: "./prd.md" })]);
+        const adapter = {
+          displayName: "OpenAI",
+          supportsAgentMode: false,
+          sendTask: vi.fn().mockResolvedValue({
+            id: "agent-2",
+            status: "completed",
+            provider: "openai",
+          }),
+        };
+        mockGetAdapter.mockReturnValue(adapter);
+
+        await messageHandler({
+          command: "sendToAgent",
+          taskId: "task-1",
+          provider: "openai",
+        });
+
+        expect(loadSpy).toHaveBeenCalledWith("./prd.md");
+        expect(adapter.sendTask).toHaveBeenCalledWith(
+          expect.objectContaining({ prdContent: "PRD content" }),
+          { model: undefined }
+        );
+      });
+
+      it("should show send message without branch name", async () => {
+        mockParseTasks.mockResolvedValueOnce([buildTask({ status: "Doing" })]);
+        const adapter = {
+          displayName: "OpenAI",
+          supportsAgentMode: false,
+          sendTask: vi.fn().mockResolvedValue({
+            id: "agent-3",
+            status: "completed",
+            provider: "openai",
+          }),
+        };
+        mockGetAdapter.mockReturnValue(adapter);
+
+        await messageHandler({
+          command: "sendToAgent",
+          taskId: "task-1",
+          provider: "openai",
+        });
+
+        expect(vscode.window.showInformationMessage).toHaveBeenCalledWith("Task sent to OpenAI");
       });
     });
   });
@@ -448,14 +964,10 @@ describe("KanbanViewProvider", () => {
       expect(mockWebview.html).toContain("Done");
     });
 
-    // Skip: The empty state content is rendered but with a welcome message when all columns are empty
-    it.skip("should show empty state messages", async () => {
+    it("should show empty state welcome when board is empty", async () => {
       await provider.show();
 
-      expect(mockWebview.html).toContain("No tasks to do");
-      expect(mockWebview.html).toContain("No tasks in progress");
-      expect(mockWebview.html).toContain("No tasks in testing");
-      expect(mockWebview.html).toContain("No completed tasks");
+      expect(mockWebview.html).toContain("Welcome to Kaiban Markdown!");
     });
 
     it("should render tasks with correct priority classes", async () => {
@@ -612,6 +1124,72 @@ describe("KanbanViewProvider", () => {
       expect(mockWebview.html).toContain("claude");
     });
 
+    it("should render agent button when sending is allowed", async () => {
+      const task = buildTask({ status: "To Do" });
+      const html = await (
+        provider as unknown as {
+          getWebviewContent: (
+            groupedTasks: Record<string, Task[]>,
+            hasAnyApiKey: boolean
+          ) => Promise<string>;
+        }
+      ).getWebviewContent(
+        {
+          "To Do": [task],
+          Doing: [],
+          Testing: [],
+          Done: [],
+        },
+        true
+      );
+
+      expect(html).toContain("showAgentModal('task-1')");
+    });
+
+    it("should hide agent button when agent is running", async () => {
+      const task = buildTask({ status: "Doing", agentStatus: "running" });
+      const html = await (
+        provider as unknown as {
+          getWebviewContent: (
+            groupedTasks: Record<string, Task[]>,
+            hasAnyApiKey: boolean
+          ) => Promise<string>;
+        }
+      ).getWebviewContent(
+        {
+          "To Do": [],
+          Doing: [task],
+          Testing: [],
+          Done: [],
+        },
+        true
+      );
+
+      expect(html).not.toContain("showAgentModal('task-1')");
+    });
+
+    it("should hide agent button for non-active status", async () => {
+      const task = buildTask({ status: "Done" });
+      const html = await (
+        provider as unknown as {
+          getWebviewContent: (
+            groupedTasks: Record<string, Task[]>,
+            hasAnyApiKey: boolean
+          ) => Promise<string>;
+        }
+      ).getWebviewContent(
+        {
+          "To Do": [],
+          Doing: [],
+          Testing: [],
+          Done: [task],
+        },
+        true
+      );
+
+      expect(html).not.toContain("showAgentModal('task-1')");
+    });
+
     it("should show rejection count badge when rejectionCount > 0", async () => {
       const tasks: Task[] = [
         {
@@ -685,6 +1263,31 @@ describe("KanbanViewProvider", () => {
 
       expect(mockWebview.html).toContain("[Done]");
       expect(mockWebview.html).toContain("completed");
+    });
+
+    it("should show agent running badge and provider badge", async () => {
+      const tasks: Task[] = [
+        buildTask({
+          agentStatus: "running",
+          agentProvider: "openai",
+          status: "Doing",
+        }),
+      ];
+
+      mockParseTasks.mockResolvedValue(tasks);
+      mockGroupByStatus.mockReturnValue({
+        "To Do": [],
+        Doing: tasks,
+        Testing: [],
+        Done: [],
+      });
+      mockGetEnabledAdapters.mockResolvedValueOnce([{}]);
+
+      const newProvider = new KanbanViewProvider(mockContext);
+      await newProvider.show();
+
+      expect(mockWebview.html).toContain("agent-running-badge");
+      expect(mockWebview.html).toContain("provider-openai");
     });
   });
 
@@ -799,6 +1402,348 @@ describe("KanbanViewProvider", () => {
 
       expect(mockWebview.html).toContain("&quot;quotes&quot;");
       expect(mockWebview.html).toContain("&#039;apostrophes&#039;");
+    });
+  });
+
+  describe("config change handling", () => {
+    it("refreshes when column settings change unless skipped", async () => {
+      let configHandler: ((e: vscode.ConfigurationChangeEvent) => void) | undefined;
+      vi.mocked(vscode.workspace.onDidChangeConfiguration).mockImplementation((handler) => {
+        configHandler = handler;
+        return { dispose: vi.fn() };
+      });
+
+      const newProvider = new KanbanViewProvider(mockContext);
+      const refreshSpy = vi.spyOn(newProvider, "refresh").mockResolvedValue(undefined);
+
+      configHandler?.({
+        affectsConfiguration: (key: string) => key === "kaiban.columns.enabled",
+      } as unknown as vscode.ConfigurationChangeEvent);
+
+      expect(refreshSpy).toHaveBeenCalled();
+
+      const internal = newProvider as unknown as { skipNextConfigRefresh: boolean };
+      internal.skipNextConfigRefresh = true;
+      refreshSpy.mockClear();
+
+      configHandler?.({
+        affectsConfiguration: (key: string) => key === "kaiban.columns.enabled",
+      } as unknown as vscode.ConfigurationChangeEvent);
+
+      expect(refreshSpy).not.toHaveBeenCalled();
+      expect(internal.skipNextConfigRefresh).toBe(false);
+    });
+
+    it("does not refresh on unrelated configuration changes", async () => {
+      let configHandler: ((e: vscode.ConfigurationChangeEvent) => void) | undefined;
+      vi.mocked(vscode.workspace.onDidChangeConfiguration).mockImplementation((handler) => {
+        configHandler = handler;
+        return { dispose: vi.fn() };
+      });
+
+      const newProvider = new KanbanViewProvider(mockContext);
+      const refreshSpy = vi.spyOn(newProvider, "refresh").mockResolvedValue(undefined);
+
+      configHandler?.({
+        affectsConfiguration: () => false,
+      } as unknown as vscode.ConfigurationChangeEvent);
+
+      expect(refreshSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("early returns without panel", () => {
+    it("no-ops handler calls when panel is undefined", async () => {
+      const internal = provider as unknown as {
+        loadPRDContent: (path: string, taskFilePath?: string) => Promise<void>;
+        handleGetAvailableProviders: () => Promise<void>;
+        handleGetModelsForProvider: (provider: "openai") => Promise<void>;
+        handlePrepareAgentPrompt: (taskId: string) => Promise<void>;
+        handleSendToAgent: (taskId: string, provider: "openai") => Promise<void>;
+      };
+
+      await internal.loadPRDContent("./prd.md");
+      await internal.handleGetAvailableProviders();
+      await internal.handleGetModelsForProvider("openai");
+      await internal.handlePrepareAgentPrompt("task-1");
+      await internal.handleSendToAgent("task-1", "openai");
+
+      expect(mockWebview.postMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("saveColumnSettings", () => {
+    it("clears skip flag when update fails", async () => {
+      const internal = provider as unknown as {
+        saveColumnSettings: (columns: string[]) => Promise<void>;
+        skipNextConfigRefresh: boolean;
+      };
+
+      const updateSpy = vi.fn().mockRejectedValue(new Error("update failed"));
+      vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({
+        update: updateSpy,
+      } as unknown as vscode.WorkspaceConfiguration);
+
+      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      await internal.saveColumnSettings(["To Do"]);
+
+      expect(internal.skipNextConfigRefresh).toBe(false);
+      expect(consoleErrorSpy).toHaveBeenCalled();
+      consoleErrorSpy.mockRestore();
+    });
+  });
+
+  describe("startAgentPolling", () => {
+    it("stops polling when adapter does not support status checks", async () => {
+      vi.useFakeTimers();
+      mockGetAdapter.mockReturnValueOnce({});
+
+      const internal = provider as unknown as {
+        startAgentPolling: (taskId: string, agentId: string, provider: "openai") => void;
+        pollingIntervals: Map<string, NodeJS.Timeout>;
+      };
+
+      internal.startAgentPolling("task-1", "agent-1", "openai");
+      vi.advanceTimersByTime(30000);
+      await vi.runOnlyPendingTimersAsync();
+
+      expect(internal.pollingIntervals.size).toBe(0);
+      vi.useRealTimers();
+    });
+
+    it("handles completed status without PR URL", async () => {
+      vi.useFakeTimers();
+      mockGetAdapter.mockReturnValueOnce({
+        checkStatus: vi.fn().mockResolvedValue({
+          id: "agent-1",
+          status: "completed",
+          provider: "openai",
+        }),
+      });
+      (vscode.window.showInformationMessage as Mock).mockResolvedValue(undefined);
+
+      const internal = provider as unknown as {
+        startAgentPolling: (taskId: string, agentId: string, provider: "openai") => void;
+      };
+
+      internal.startAgentPolling("task-1", "agent-1", "openai");
+      vi.advanceTimersByTime(30000);
+      await vi.runOnlyPendingTimersAsync();
+
+      expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+        "Agent completed the task!"
+      );
+      vi.useRealTimers();
+    });
+
+    it("does not open PR when PR URL is missing", async () => {
+      vi.useFakeTimers();
+      mockGetAdapter.mockReturnValueOnce({
+        checkStatus: vi.fn().mockResolvedValue({
+          id: "agent-1",
+          status: "completed",
+          provider: "openai",
+          prUrl: "",
+        }),
+      });
+      (vscode.window.showInformationMessage as Mock).mockResolvedValue("View PR");
+
+      const internal = provider as unknown as {
+        startAgentPolling: (taskId: string, agentId: string, provider: "openai") => void;
+      };
+
+      internal.startAgentPolling("task-1", "agent-1", "openai");
+      vi.advanceTimersByTime(30000);
+      await vi.runOnlyPendingTimersAsync();
+
+      expect(vscode.env.openExternal).not.toHaveBeenCalled();
+      vi.useRealTimers();
+    });
+
+    it("handles error status with warning message", async () => {
+      vi.useFakeTimers();
+      mockGetAdapter.mockReturnValueOnce({
+        checkStatus: vi.fn().mockResolvedValue({
+          id: "agent-1",
+          status: "error",
+          provider: "openai",
+          error: "Boom",
+        }),
+      });
+
+      const internal = provider as unknown as {
+        startAgentPolling: (taskId: string, agentId: string, provider: "openai") => void;
+      };
+
+      internal.startAgentPolling("task-1", "agent-1", "openai");
+      vi.advanceTimersByTime(30000);
+      await vi.runOnlyPendingTimersAsync();
+
+      expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+        "Agent encountered an error: Boom"
+      );
+      vi.useRealTimers();
+    });
+
+    it("logs polling errors", async () => {
+      vi.useFakeTimers();
+      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      mockGetAdapter.mockReturnValueOnce({
+        checkStatus: vi.fn().mockRejectedValue(new Error("poll failed")),
+      });
+
+      const internal = provider as unknown as {
+        startAgentPolling: (taskId: string, agentId: string, provider: "openai") => void;
+      };
+
+      internal.startAgentPolling("task-1", "agent-1", "openai");
+      vi.advanceTimersByTime(30000);
+      await vi.runOnlyPendingTimersAsync();
+
+      expect(consoleErrorSpy).toHaveBeenCalled();
+      consoleErrorSpy.mockRestore();
+      vi.useRealTimers();
+    });
+
+    it("ignores non-terminal agent statuses", async () => {
+      vi.useFakeTimers();
+      mockGetAdapter.mockReturnValueOnce({
+        checkStatus: vi.fn().mockResolvedValue({
+          id: "agent-2",
+          status: "running",
+          provider: "openai",
+        }),
+      });
+
+      const internal = provider as unknown as {
+        startAgentPolling: (taskId: string, agentId: string, provider: "openai") => void;
+        stopAgentPolling: (taskId: string) => void;
+      };
+
+      internal.startAgentPolling("task-2", "agent-2", "openai");
+      vi.advanceTimersByTime(30000);
+      await vi.runOnlyPendingTimersAsync();
+
+      expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
+      internal.stopAgentPolling("task-2");
+      vi.useRealTimers();
+    });
+  });
+
+  describe("stopAgentPolling", () => {
+    it("does nothing when no interval exists", () => {
+      const internal = provider as unknown as {
+        stopAgentPolling: (taskId: string) => void;
+        pollingIntervals: Map<string, NodeJS.Timeout>;
+      };
+
+      internal.stopAgentPolling("missing-task");
+      expect(internal.pollingIntervals.size).toBe(0);
+    });
+  });
+
+  describe("loadPRDContentRaw", () => {
+    it("returns empty string when no workspace folders", async () => {
+      const internal = provider as unknown as {
+        loadPRDContentRaw: (path: string) => Promise<string>;
+      };
+      vi.mocked(vscode.workspace).workspaceFolders = undefined;
+
+      const result = await internal.loadPRDContentRaw("./prd.md");
+      expect(result).toBe("");
+    });
+
+    it("skips workspace root fallback for absolute paths", async () => {
+      const internal = provider as unknown as {
+        loadPRDContentRaw: (path: string) => Promise<string>;
+      };
+      vi.mocked(vscode.workspace).workspaceFolders = [
+        { uri: { fsPath: "/workspace" } },
+      ] as unknown as readonly vscode.WorkspaceFolder[];
+      vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({
+        get: vi.fn().mockReturnValue(".agent/PRDS"),
+      } as unknown as vscode.WorkspaceConfiguration);
+      (vscode.workspace.openTextDocument as Mock).mockRejectedValue(new Error("missing"));
+
+      const result = await internal.loadPRDContentRaw("/tmp/prd.md");
+
+      expect(result).toBe("");
+      expect(vscode.workspace.openTextDocument).toHaveBeenCalledTimes(1);
+    });
+
+    it("resolves PRD path from base path directory", async () => {
+      const internal = provider as unknown as {
+        loadPRDContentRaw: (path: string) => Promise<string>;
+      };
+      vi.mocked(vscode.workspace).workspaceFolders = [
+        { uri: { fsPath: "/workspace" } },
+      ] as unknown as readonly vscode.WorkspaceFolder[];
+      vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({
+        get: vi.fn().mockReturnValue(".agent/PRDS"),
+      } as unknown as vscode.WorkspaceConfiguration);
+      (vscode.workspace.openTextDocument as Mock).mockResolvedValue({
+        getText: () => "PRD content",
+      });
+
+      const result = await internal.loadPRDContentRaw("../../.agent/PRDS/specs/prd.md");
+
+      expect(result).toBe("PRD content");
+      expect(vscode.workspace.openTextDocument).toHaveBeenCalled();
+    });
+
+    it("resolves PRD path when base path segment is the first relative part", async () => {
+      const internal = provider as unknown as {
+        loadPRDContentRaw: (path: string) => Promise<string>;
+      };
+      vi.mocked(vscode.workspace).workspaceFolders = [
+        { uri: { fsPath: "/workspace" } },
+      ] as unknown as readonly vscode.WorkspaceFolder[];
+      vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({
+        get: vi.fn().mockReturnValue(".agent/PRDS"),
+      } as unknown as vscode.WorkspaceConfiguration);
+      (vscode.workspace.openTextDocument as Mock).mockResolvedValue({
+        getText: () => "Base path PRD",
+      });
+
+      const result = await internal.loadPRDContentRaw("../PRDS");
+
+      expect(result).toBe("Base path PRD");
+    });
+
+    it("falls back to workspace root when base path resolution fails", async () => {
+      const internal = provider as unknown as {
+        loadPRDContentRaw: (path: string) => Promise<string>;
+      };
+      vi.mocked(vscode.workspace).workspaceFolders = [
+        { uri: { fsPath: "/workspace" } },
+      ] as unknown as readonly vscode.WorkspaceFolder[];
+      vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({
+        get: vi.fn().mockReturnValue(".agent/PRDS"),
+      } as unknown as vscode.WorkspaceConfiguration);
+      (vscode.workspace.openTextDocument as Mock)
+        .mockRejectedValueOnce(new Error("missing"))
+        .mockResolvedValueOnce({ getText: () => "Root PRD" });
+
+      const result = await internal.loadPRDContentRaw("docs/prd.md");
+
+      expect(result).toBe("Root PRD");
+    });
+
+    it("returns empty string when all resolutions fail", async () => {
+      const internal = provider as unknown as {
+        loadPRDContentRaw: (path: string) => Promise<string>;
+      };
+      vi.mocked(vscode.workspace).workspaceFolders = [
+        { uri: { fsPath: "/workspace" } },
+      ] as unknown as readonly vscode.WorkspaceFolder[];
+      vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({
+        get: vi.fn().mockReturnValue(".agent/PRDS"),
+      } as unknown as vscode.WorkspaceConfiguration);
+      (vscode.workspace.openTextDocument as Mock).mockRejectedValue(new Error("missing"));
+
+      const result = await internal.loadPRDContentRaw("docs/missing.md");
+
+      expect(result).toBe("");
     });
   });
 });

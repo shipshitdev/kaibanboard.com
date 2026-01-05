@@ -18,6 +18,7 @@ vi.mock("vscode", () => {
       })),
       showInformationMessage: vi.fn().mockResolvedValue(undefined),
       showErrorMessage: vi.fn().mockResolvedValue(undefined),
+      showWarningMessage: vi.fn().mockResolvedValue(undefined),
       showTextDocument: vi.fn().mockResolvedValue(undefined),
       showQuickPick: vi.fn().mockResolvedValue(undefined),
       showInputBox: vi.fn().mockResolvedValue(undefined),
@@ -27,6 +28,7 @@ vi.mock("vscode", () => {
       openTextDocument: vi.fn().mockResolvedValue({}),
       getConfiguration: vi.fn().mockReturnValue({
         get: vi.fn().mockReturnValue(""),
+        update: vi.fn().mockResolvedValue(undefined),
       }),
       onDidChangeConfiguration: vi.fn(() => mockDisposable),
     },
@@ -45,6 +47,9 @@ vi.mock("vscode", () => {
       One: 1,
       Two: 2,
       Three: 3,
+    },
+    ConfigurationTarget: {
+      Workspace: 1,
     },
     extensions: {
       getExtension: vi.fn().mockReturnValue(undefined),

@@ -62,6 +62,17 @@ describe("ProviderRegistry", () => {
     });
   });
 
+  describe("getAllAdapters", () => {
+    it("should return all registered adapters", () => {
+      const adapter1 = createMockAdapter("openai", "OpenAI");
+      const adapter2 = createMockAdapter("openrouter", "OpenRouter");
+      registry.registerAdapter(adapter1);
+      registry.registerAdapter(adapter2);
+
+      expect(registry.getAllAdapters()).toEqual([adapter1, adapter2]);
+    });
+  });
+
   describe("getEnabledAdapters", () => {
     it("should return adapters with configured API keys", async () => {
       const adapter1 = createMockAdapter("openai", "OpenAI");
@@ -111,6 +122,48 @@ describe("ProviderRegistry", () => {
 
       const providers = await registry.getAvailableProviders();
       expect(providers[0].enabled).toBe(false);
+    });
+  });
+
+  describe("isProviderAvailable", () => {
+    it("should return false when adapter is not registered", async () => {
+      await expect(registry.isProviderAvailable("cursor")).resolves.toBe(false);
+    });
+
+    it("should return true when adapter exists and API key is configured", async () => {
+      const adapter = createMockAdapter("openai", "OpenAI");
+      registry.registerAdapter(adapter);
+      (mockApiKeyManager.hasApiKey as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+
+      await expect(registry.isProviderAvailable("openai")).resolves.toBe(true);
+    });
+  });
+
+  describe("getProviderWithModels", () => {
+    it("should return null when adapter is missing", async () => {
+      const result = await registry.getProviderWithModels("replicate");
+      expect(result).toBeNull();
+    });
+
+    it("should return null when no API key is configured", async () => {
+      const adapter = createMockAdapter("openrouter", "OpenRouter");
+      registry.registerAdapter(adapter);
+      (mockApiKeyManager.hasApiKey as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+
+      const result = await registry.getProviderWithModels("openrouter");
+      expect(result).toBeNull();
+    });
+
+    it("should return adapter and models when configured", async () => {
+      const adapter = createMockAdapter("openrouter", "OpenRouter");
+      const models = [{ id: "model-1" }];
+      adapter.getAvailableModels = vi.fn().mockResolvedValue(models);
+      registry.registerAdapter(adapter);
+      (mockApiKeyManager.hasApiKey as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+
+      const result = await registry.getProviderWithModels("openrouter");
+      expect(result?.adapter).toBe(adapter);
+      expect(result?.models).toBe(models);
     });
   });
 });

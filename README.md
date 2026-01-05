@@ -1,5 +1,6 @@
 # Kaiban Markdown - VS Code Extension
 
+![Project Type](https://img.shields.io/badge/Project-App-blue)
 ![Status](https://img.shields.io/badge/status-development-orange)
 ![Version](https://img.shields.io/badge/version-pre--release-red)
 ![Production](https://img.shields.io/badge/production-not%20ready-red)

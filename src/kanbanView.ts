@@ -1540,7 +1540,7 @@ Your task details here...</code></pre>
         : `
 ${allColumns
   .map((column) => {
-    const tasks = columnTasks[column] || [];
+    const tasks = columnTasks[column];
     const columnClass = column.toLowerCase().replace(/\s+/g, "-");
     const isHidden = !enabledColumns.includes(column);
     const emptyMessages: Record<string, string> = {
@@ -1551,7 +1551,7 @@ ${allColumns
       Done: "No completed tasks",
       Blocked: "No blocked tasks",
     };
-    const emptyMessage = emptyMessages[column] || `No tasks in ${column}`;
+    const emptyMessage = emptyMessages[column];
 
     return `
     <div class="column column-${columnClass}${isHidden ? " hidden" : ""}" data-status="${column}">

@@ -200,6 +200,41 @@ Second note line
       expect(tasks[0].claimedBy).toBe("");
       expect(tasks[0].rejectionCount).toBe(0);
     });
+
+    it("should fall back when metadata values are missing", async () => {
+      const taskContent = `## Task: Missing Metadata
+
+**ID:**
+**Label:**
+**Description:**
+**Type:**
+**Status:**
+**Priority:**
+**Created:**
+**Updated:**
+**PRD:** [Link]()
+**Rejection-Count:** not-a-number
+
+---`;
+
+      vi.mocked(vscode.workspace).workspaceFolders = [
+        { uri: { fsPath: "/workspace" }, name: "project" },
+      ] as unknown as readonly vscode.WorkspaceFolder[];
+
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      vi.mocked(fs.readdirSync).mockReturnValue([
+        { name: "task.md", isDirectory: () => false, isFile: () => true },
+      ] as unknown as fs.Dirent[]);
+      vi.mocked(fs.readFileSync).mockReturnValue(taskContent);
+
+      const tasks = await taskParser.parseTasks();
+
+      expect(tasks[0].id).toBe("");
+      expect(tasks[0].label).toBe("Missing Metadata");
+      expect(tasks[0].status).toBe("To Do");
+      expect(tasks[0].priority).toBe("Medium");
+      expect(tasks[0].rejectionCount).toBe(0);
+    });
   });
 
   describe("findTaskFiles", () => {
@@ -463,6 +498,207 @@ Second note line
       await expect(taskParser.updateTaskStatus("nonexistent", "Done")).rejects.toThrow(
         "Task with ID nonexistent not found"
       );
+    });
+
+    it("should update PRD status when PRD has status field", async () => {
+      const taskContent = `## Task: Test\n\n**ID:** task-001\n**Status:** Backlog\n**Updated:** 2024-01-01\n**PRD:** [Link](../PRDS/prd.md)\n\n---`;
+      const prdContent = "# PRD\n\n**Status:** Backlog\n\nDetails";
+
+      vi.mocked(vscode.workspace).workspaceFolders = [
+        { uri: { fsPath: "/workspace" }, name: "project" },
+      ] as unknown as readonly vscode.WorkspaceFolder[];
+
+      vi.mocked(fs.existsSync).mockImplementation((pathValue) => {
+        return String(pathValue).includes(".agent/TASKS") || String(pathValue).includes("PRDS");
+      });
+      vi.mocked(fs.readdirSync).mockReturnValue([
+        { name: "task.md", isDirectory: () => false, isFile: () => true },
+      ] as unknown as fs.Dirent[]);
+      vi.mocked(fs.readFileSync).mockImplementation((pathValue) =>
+        String(pathValue).includes("prd.md") ? prdContent : taskContent
+      );
+
+      await taskParser.updateTaskStatus("task-001", "Done");
+
+      const prdWriteCall = vi
+        .mocked(fs.writeFileSync)
+        .mock.calls.find((call) => String(call[0]).includes("prd.md"));
+      expect(prdWriteCall?.[1]).toContain("**Status:** Done");
+    });
+
+    it("should insert PRD status when missing", async () => {
+      const taskContent = `## Task: Test\n\n**ID:** task-002\n**Status:** Backlog\n**Updated:** 2024-01-01\n**PRD:** [Link](./prd.md)\n\n---`;
+      const prdContent = "# PRD\n\nDetails";
+
+      vi.mocked(vscode.workspace).workspaceFolders = [
+        { uri: { fsPath: "/workspace" }, name: "project" },
+      ] as unknown as readonly vscode.WorkspaceFolder[];
+
+      vi.mocked(fs.existsSync).mockImplementation((pathValue) => {
+        return String(pathValue).includes(".agent/TASKS") || String(pathValue).includes("prd.md");
+      });
+      vi.mocked(fs.readdirSync).mockReturnValue([
+        { name: "task.md", isDirectory: () => false, isFile: () => true },
+      ] as unknown as fs.Dirent[]);
+      vi.mocked(fs.readFileSync).mockImplementation((pathValue) =>
+        String(pathValue).includes("prd.md") ? prdContent : taskContent
+      );
+
+      await taskParser.updateTaskStatus("task-002", "Testing");
+
+      const prdWriteCall = vi
+        .mocked(fs.writeFileSync)
+        .mock.calls.find((call) => String(call[0]).includes("prd.md"));
+      expect(prdWriteCall?.[1]).toContain("**Status:** Testing");
+    });
+
+    it("should insert PRD status when no heading is present", async () => {
+      const taskContent = `## Task: Test\n\n**ID:** task-007\n**Status:** Backlog\n**Updated:** 2024-01-01\n**PRD:** [Link](./prd.md)\n\n---`;
+      const prdContent = "PRD details without heading";
+
+      vi.mocked(vscode.workspace).workspaceFolders = [
+        { uri: { fsPath: "/workspace" }, name: "project" },
+      ] as unknown as readonly vscode.WorkspaceFolder[];
+
+      vi.mocked(fs.existsSync).mockImplementation((pathValue) => {
+        return String(pathValue).includes(".agent/TASKS") || String(pathValue).includes("prd.md");
+      });
+      vi.mocked(fs.readdirSync).mockReturnValue([
+        { name: "task.md", isDirectory: () => false, isFile: () => true },
+      ] as unknown as fs.Dirent[]);
+      vi.mocked(fs.readFileSync).mockImplementation((pathValue) =>
+        String(pathValue).includes("prd.md") ? prdContent : taskContent
+      );
+
+      await taskParser.updateTaskStatus("task-007", "Testing");
+
+      const prdWriteCall = vi
+        .mocked(fs.writeFileSync)
+        .mock.calls.find((call) => String(call[0]).includes("prd.md"));
+      expect(prdWriteCall?.[1]).toContain("**Status:** Testing");
+    });
+
+    it("should skip PRD update when file does not exist", async () => {
+      const taskContent = `## Task: Test\n\n**ID:** task-003\n**Status:** Backlog\n**Updated:** 2024-01-01\n**PRD:** [Link](missing.md)\n\n---`;
+
+      vi.mocked(vscode.workspace).workspaceFolders = [
+        { uri: { fsPath: "/workspace" }, name: "project" },
+      ] as unknown as readonly vscode.WorkspaceFolder[];
+      vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+        get: vi.fn().mockReturnValue(".agent/PRDS"),
+      } as unknown as vscode.WorkspaceConfiguration);
+
+      vi.mocked(fs.existsSync).mockImplementation((pathValue) => {
+        return String(pathValue).includes(".agent/TASKS");
+      });
+      vi.mocked(fs.readdirSync).mockReturnValue([
+        { name: "task.md", isDirectory: () => false, isFile: () => true },
+      ] as unknown as fs.Dirent[]);
+      vi.mocked(fs.readFileSync).mockReturnValue(taskContent);
+
+      await taskParser.updateTaskStatus("task-003", "Done");
+
+      const prdWriteCall = vi
+        .mocked(fs.writeFileSync)
+        .mock.calls.find((call) => String(call[0]).includes("missing.md"));
+      expect(prdWriteCall).toBeUndefined();
+    });
+
+    it("should resolve absolute PRD path", async () => {
+      const taskContent = `## Task: Test\n\n**ID:** task-005\n**Status:** Backlog\n**Updated:** 2024-01-01\n**PRD:** [Link](/workspace/prd.md)\n\n---`;
+      const prdContent = "# PRD\n\n**Status:** Backlog\n\nDetails";
+
+      vi.mocked(vscode.workspace).workspaceFolders = [
+        { uri: { fsPath: "/workspace" }, name: "project" },
+      ] as unknown as readonly vscode.WorkspaceFolder[];
+
+      vi.mocked(fs.existsSync).mockImplementation((pathValue) => {
+        const pathString = String(pathValue);
+        return pathString.includes(".agent/TASKS") || pathString === "/workspace/prd.md";
+      });
+      vi.mocked(fs.readdirSync).mockReturnValue([
+        { name: "task.md", isDirectory: () => false, isFile: () => true },
+      ] as unknown as fs.Dirent[]);
+      vi.mocked(fs.readFileSync).mockImplementation((pathValue) =>
+        String(pathValue).includes("/workspace/prd.md") ? prdContent : taskContent
+      );
+
+      await taskParser.updateTaskStatus("task-005", "Done");
+
+      const prdWriteCall = vi
+        .mocked(fs.writeFileSync)
+        .mock.calls.find((call) => call[0] === "/workspace/prd.md");
+      expect(prdWriteCall?.[1]).toContain("**Status:** Done");
+    });
+
+    it("should resolve PRD path relative to task file when no workspace folders", async () => {
+      const taskContent = `## Task: Test\n\n**ID:** task-006\n**Status:** Backlog\n**Updated:** 2024-01-01\n**PRD:** [Link](prd.md)\n\n---`;
+      const prdContent = "# PRD\n\n**Status:** Backlog\n\nDetails";
+
+      vi.mocked(vscode.workspace).workspaceFolders = undefined;
+
+      vi.spyOn(taskParser, "parseTasks").mockResolvedValue([
+        {
+          id: "task-006",
+          label: "Test",
+          description: "",
+          type: "Task",
+          status: "Backlog",
+          priority: "Medium",
+          created: "",
+          updated: "",
+          prdPath: "prd.md",
+          filePath: "/workspace/.agent/TASKS/task.md",
+          completed: false,
+          project: "project",
+          claimedBy: "",
+          claimedAt: "",
+          completedAt: "",
+          rejectionCount: 0,
+          agentNotes: "",
+        },
+      ]);
+
+      vi.mocked(fs.existsSync).mockImplementation((pathValue) => {
+        const pathString = String(pathValue);
+        return pathString.includes(".agent/TASKS") || pathString.endsWith("/prd.md");
+      });
+      vi.mocked(fs.readFileSync).mockImplementation((pathValue) =>
+        String(pathValue).endsWith("/prd.md") ? prdContent : taskContent
+      );
+
+      await taskParser.updateTaskStatus("task-006", "Done");
+
+      const prdWriteCall = vi
+        .mocked(fs.writeFileSync)
+        .mock.calls.find((call) => String(call[0]).endsWith("/prd.md"));
+      expect(prdWriteCall?.[1]).toContain("**Status:** Done");
+    });
+
+    it("should warn when PRD update fails", async () => {
+      const taskContent = `## Task: Test\n\n**ID:** task-004\n**Status:** Backlog\n**Updated:** 2024-01-01\n**PRD:** [Link](./prd.md)\n\n---`;
+
+      vi.mocked(vscode.workspace).workspaceFolders = [
+        { uri: { fsPath: "/workspace" }, name: "project" },
+      ] as unknown as readonly vscode.WorkspaceFolder[];
+
+      vi.mocked(fs.existsSync).mockImplementation((pathValue) => {
+        return String(pathValue).includes(".agent/TASKS") || String(pathValue).includes("prd.md");
+      });
+      vi.mocked(fs.readdirSync).mockReturnValue([
+        { name: "task.md", isDirectory: () => false, isFile: () => true },
+      ] as unknown as fs.Dirent[]);
+      vi.mocked(fs.readFileSync).mockImplementation((pathValue) => {
+        if (String(pathValue).includes("prd.md")) {
+          throw new Error("PRD read error");
+        }
+        return taskContent;
+      });
+
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      await taskParser.updateTaskStatus("task-004", "Done");
+      expect(warnSpy).toHaveBeenCalled();
+      warnSpy.mockRestore();
     });
   });
 

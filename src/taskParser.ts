@@ -84,14 +84,11 @@ export class TaskParser {
         const match = line.match(/^\*\*PRD:\*\*\s*\[Link\]\((.+)\)$/);
         if (match) metadata.prd = match[1].trim();
       } else if (line.startsWith("**Claimed-By:**")) {
-        const match = line.match(/^\*\*Claimed-By:\*\*\s*(.*)$/);
-        if (match) metadata.claimedBy = match[1].trim();
+        metadata.claimedBy = line.replace("**Claimed-By:**", "").trim();
       } else if (line.startsWith("**Claimed-At:**")) {
-        const match = line.match(/^\*\*Claimed-At:\*\*\s*(.*)$/);
-        if (match) metadata.claimedAt = match[1].trim();
+        metadata.claimedAt = line.replace("**Claimed-At:**", "").trim();
       } else if (line.startsWith("**Completed-At:**")) {
-        const match = line.match(/^\*\*Completed-At:\*\*\s*(.*)$/);
-        if (match) metadata.completedAt = match[1].trim();
+        metadata.completedAt = line.replace("**Completed-At:**", "").trim();
       } else if (line.startsWith("**Rejection-Count:**")) {
         const match = line.match(/^\*\*Rejection-Count:\*\*\s*(\d+)$/);
         if (match) metadata.rejectionCount = parseInt(match[1], 10);
