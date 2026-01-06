@@ -140,8 +140,8 @@ describe("extension", () => {
 
     it("should add commands to subscriptions", () => {
       activate(mockContext);
-      // 6 commands: showBoard, refreshBoard, configureProviders, setApiKey, clearApiKey, selectProvider
-      expect(mockContext.subscriptions.length).toBe(6);
+      // 8 commands: showBoard, refreshBoard, configureProviders, setApiKey, clearApiKey, configurePRDPath, createPRD, createTask
+      expect(mockContext.subscriptions.length).toBe(8);
     });
 
     it("should show welcome message with Open Board option", () => {
