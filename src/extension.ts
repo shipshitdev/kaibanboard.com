@@ -1,7 +1,23 @@
 import * as vscode from "vscode";
+import { CursorCloudAdapter } from "./adapters/cursorCloudAdapter";
+import { OpenAIAdapter } from "./adapters/openaiAdapter";
+import { OpenRouterAdapter } from "./adapters/openrouterAdapter";
+import { ReplicateAdapter } from "./adapters/replicateAdapter";
 import { ApiKeyManager } from "./config/apiKeyManager";
 import { KanbanViewProvider } from "./kanbanView";
+import { generatePRD, generateSimplePRDTemplate } from "./services/prdGenerator";
+import { ProviderRegistry } from "./services/providerRegistry";
+import { generateSimpleTaskTemplate, generateTask } from "./services/taskGenerator";
 import type { ProviderType } from "./types/aiProvider";
+import {
+  createFile,
+  ensureDirectoryExists,
+  generateUniqueFileName,
+  getPRDBasePath,
+  getTasksBasePath,
+  getWorkspaceFolder,
+  slugify,
+} from "./utils/fileUtils";
 
 let kanbanView: KanbanViewProvider;
 let apiKeyManager: ApiKeyManager;
@@ -159,6 +175,289 @@ export function activate(context: vscode.ExtensionContext) {
     }
   });
 
+  // Register command to create PRD
+  const createPRDCommand = vscode.commands.registerCommand("kaiban.createPRD", async () => {
+    try {
+      const workspaceFolder = getWorkspaceFolder();
+      if (!workspaceFolder) {
+        vscode.window.showErrorMessage("No workspace folder open");
+        return;
+      }
+
+      // Prompt for PRD title
+      const title = await vscode.window.showInputBox({
+        prompt: "Enter PRD title",
+        placeHolder: "e.g., User Authentication System",
+        validateInput: (value) => {
+          if (!value || value.trim().length === 0) {
+            return "Title cannot be empty";
+          }
+          return null;
+        },
+      });
+
+      if (!title) {
+        return;
+      }
+
+      // Prompt for description (optional)
+      const description = await vscode.window.showInputBox({
+        prompt: "Enter PRD description (optional)",
+        placeHolder: "Brief description of what this PRD covers",
+      });
+
+      // Check if AI providers are available
+      const hasProviders = await providerRegistry
+        .getEnabledAdapters()
+        .then((adapters) => adapters.length > 0);
+
+      let prdContent: string;
+      let useAI = false;
+
+      if (hasProviders) {
+        // Ask user if they want to use AI
+        const useAIChoice = await vscode.window.showQuickPick(
+          [
+            { label: "Yes", description: "Use AI to generate PRD content" },
+            { label: "No", description: "Create template only" },
+          ],
+          {
+            placeHolder: "Use AI to generate PRD content?",
+          }
+        );
+
+        useAI = useAIChoice?.label === "Yes";
+      }
+
+      if (useAI) {
+        try {
+          vscode.window.showInformationMessage("Generating PRD with AI...");
+          const generated = await generatePRD(providerRegistry, {
+            title,
+            description: description || undefined,
+          });
+          prdContent = generated.content;
+          vscode.window.showInformationMessage(
+            `PRD generated using ${generated.provider}${generated.model ? ` (${generated.model})` : ""}`
+          );
+        } catch (error) {
+          vscode.window.showWarningMessage(
+            `AI generation failed: ${error}. Creating template instead.`
+          );
+          prdContent = generateSimplePRDTemplate(title, description || undefined);
+        }
+      } else {
+        prdContent = generateSimplePRDTemplate(title, description || undefined);
+      }
+
+      // Generate file name
+      const slug = slugify(title);
+      const prdBasePath = getPRDBasePath(workspaceFolder);
+      await ensureDirectoryExists(prdBasePath);
+
+      const fileName = generateUniqueFileName(prdBasePath, `${slug}-prd`, ".md");
+      const filePath = `${prdBasePath}/${fileName}`;
+
+      // Create file
+      await createFile(filePath, prdContent);
+
+      // Show success message
+      vscode.window.showInformationMessage(`PRD created: ${fileName}`);
+
+      // Open the file
+      const uri = vscode.Uri.file(filePath);
+      const document = await vscode.workspace.openTextDocument(uri);
+      await vscode.window.showTextDocument(document);
+
+      // Refresh board if it's open
+      if (kanbanView) {
+        await kanbanView.refresh();
+      }
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to create PRD: ${error}`);
+    }
+  });
+
+  // Register command to create Task
+  const createTaskCommand = vscode.commands.registerCommand("kaiban.createTask", async () => {
+    try {
+      const workspaceFolder = getWorkspaceFolder();
+      if (!workspaceFolder) {
+        vscode.window.showErrorMessage("No workspace folder open");
+        return;
+      }
+
+      // Prompt for task title
+      const title = await vscode.window.showInputBox({
+        prompt: "Enter task title",
+        placeHolder: "e.g., Implement user authentication",
+        validateInput: (value) => {
+          if (!value || value.trim().length === 0) {
+            return "Title cannot be empty";
+          }
+          return null;
+        },
+      });
+
+      if (!title) {
+        return;
+      }
+
+      // Prompt for description (optional)
+      const description = await vscode.window.showInputBox({
+        prompt: "Enter task description (optional)",
+        placeHolder: "Brief description of the task",
+      });
+
+      // Prompt for type
+      const typeChoice = await vscode.window.showQuickPick(
+        [
+          { label: "Feature", value: "Feature" },
+          { label: "Bug", value: "Bug" },
+          { label: "Enhancement", value: "Enhancement" },
+          { label: "Research", value: "Research" },
+        ],
+        {
+          placeHolder: "Select task type",
+        }
+      );
+
+      if (!typeChoice) {
+        return;
+      }
+
+      // Prompt for priority
+      const priorityChoice = await vscode.window.showQuickPick(
+        [
+          { label: "High", value: "High" },
+          { label: "Medium", value: "Medium" },
+          { label: "Low", value: "Low" },
+        ],
+        {
+          placeHolder: "Select priority",
+        }
+      );
+
+      if (!priorityChoice) {
+        return;
+      }
+
+      // Prompt for status
+      const statusChoice = await vscode.window.showQuickPick(
+        [
+          { label: "Backlog", value: "Backlog" },
+          { label: "To Do", value: "To Do" },
+          { label: "Doing", value: "Doing" },
+          { label: "Testing", value: "Testing" },
+          { label: "Done", value: "Done" },
+          { label: "Blocked", value: "Blocked" },
+        ],
+        {
+          placeHolder: "Select status",
+        }
+      );
+
+      if (!statusChoice) {
+        return;
+      }
+
+      // Check if AI providers are available
+      const hasProviders = await providerRegistry
+        .getEnabledAdapters()
+        .then((adapters) => adapters.length > 0);
+
+      let taskContent: string;
+      let useAI = false;
+      let taskId = `task-${Date.now().toString(36)}`;
+
+      if (hasProviders) {
+        // Ask user if they want to use AI
+        const useAIChoice = await vscode.window.showQuickPick(
+          [
+            { label: "Yes", description: "Use AI to generate task description" },
+            { label: "No", description: "Create template only" },
+          ],
+          {
+            placeHolder: "Use AI to generate task description?",
+          }
+        );
+
+        useAI = useAIChoice?.label === "Yes";
+      }
+
+      if (useAI) {
+        try {
+          vscode.window.showInformationMessage("Generating task with AI...");
+          const generated = await generateTask(providerRegistry, {
+            title,
+            description: description || undefined,
+            type: typeChoice.value as "Feature" | "Bug" | "Enhancement" | "Research",
+            priority: priorityChoice.value as "High" | "Medium" | "Low",
+            status: statusChoice.value as
+              | "Backlog"
+              | "To Do"
+              | "Doing"
+              | "Testing"
+              | "Done"
+              | "Blocked",
+          });
+          taskContent = generated.content;
+          taskId = generated.id;
+          vscode.window.showInformationMessage(
+            `Task generated using ${generated.provider}${generated.model ? ` (${generated.model})` : ""}`
+          );
+        } catch (error) {
+          vscode.window.showWarningMessage(
+            `AI generation failed: ${error}. Creating template instead.`
+          );
+          taskContent = generateSimpleTaskTemplate({
+            id: taskId,
+            label: title,
+            description: description || undefined,
+            type: typeChoice.value,
+            priority: priorityChoice.value,
+            status: statusChoice.value,
+          });
+        }
+      } else {
+        taskContent = generateSimpleTaskTemplate({
+          id: taskId,
+          label: title,
+          description: description || undefined,
+          type: typeChoice.value,
+          priority: priorityChoice.value,
+          status: statusChoice.value,
+        });
+      }
+
+      // Generate file name
+      const slug = slugify(title);
+      const tasksBasePath = getTasksBasePath(workspaceFolder);
+      await ensureDirectoryExists(tasksBasePath);
+
+      const fileName = generateUniqueFileName(tasksBasePath, slug, ".md");
+      const filePath = `${tasksBasePath}/${fileName}`;
+
+      // Create file
+      await createFile(filePath, taskContent);
+
+      // Show success message
+      vscode.window.showInformationMessage(`Task created: ${fileName}`);
+
+      // Open the file
+      const uri = vscode.Uri.file(filePath);
+      const document = await vscode.workspace.openTextDocument(uri);
+      await vscode.window.showTextDocument(document);
+
+      // Refresh board if it's open
+      if (kanbanView) {
+        await kanbanView.refresh();
+      }
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to create task: ${error}`);
+    }
+  });
+
   // Register command to configure PRD base path
   const configurePRDPathCommand = vscode.commands.registerCommand(
     "kaiban.configurePRDPath",
@@ -263,13 +562,28 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
 
+  // Create provider registry for AI generation
+  const providerRegistry = new ProviderRegistry(apiKeyManager);
+
+  // Register adapters for provider registry
+  providerRegistry.registerAdapter(
+    new OpenRouterAdapter(() => apiKeyManager.getApiKey("openrouter"))
+  );
+  providerRegistry.registerAdapter(new OpenAIAdapter(() => apiKeyManager.getApiKey("openai")));
+  providerRegistry.registerAdapter(new CursorCloudAdapter(() => apiKeyManager.getApiKey("cursor")));
+  providerRegistry.registerAdapter(
+    new ReplicateAdapter(() => apiKeyManager.getApiKey("replicate"))
+  );
+
   context.subscriptions.push(
     showBoardCommand,
     refreshBoardCommand,
     configureProvidersCommand,
     setApiKeyCommand,
     clearApiKeyCommand,
-    configurePRDPathCommand
+    configurePRDPathCommand,
+    createPRDCommand,
+    createTaskCommand
   );
 
   // Show welcome message

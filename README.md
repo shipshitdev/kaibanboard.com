@@ -226,6 +226,41 @@ The Cursor Cloud Agent workflow allows you to send tasks to Cursor's AI agent, w
 - Click any task card to preview PRD
 - Double-click any task card to open the task file for editing
 
+### Create PRD or Task from Cursor Chat
+
+You can trigger PRD and Task creation directly from Cursor's chat interface:
+
+#### Using Command Syntax
+
+In Cursor chat, type:
+- `@kaiban.createPRD` to create a new PRD
+- `@kaiban.createTask` to create a new Task
+
+**Example:**
+```
+@kaiban.createPRD
+```
+
+After running the command, you'll be prompted for:
+1. PRD/Task title (required)
+2. Description (optional)
+3. Additional fields (for tasks: type, priority, status)
+4. Whether to use AI generation (if AI providers are configured)
+
+#### Using Command Palette
+
+You can also use the Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`):
+- `Kaiban: Create PRD` - Create a new PRD file with AI assistance
+- `Kaiban: Create Task` - Create a new Task file with AI assistance
+
+#### AI-Assisted Generation
+
+When creating a PRD or Task, if you have AI providers configured (OpenAI, OpenRouter, etc.), you'll be asked if you want to use AI to generate the content:
+- **Yes**: AI will generate comprehensive content based on your title and description
+- **No**: Creates a template file that you can fill in manually
+
+**Note**: AI generation requires at least one configured AI provider. See [Step 5: Setting Up Cursor Cloud Agent](#step-5-setting-up-cursor-cloud-agent-optional) for setup instructions.
+
 ## .agent/TASKS|PRDS Architecture
 
 This extension is designed to work with the **classic .agent/TASKS|PRDS architecture** that many AI agents and development workflows use:
