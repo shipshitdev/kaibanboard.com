@@ -1,5 +1,5 @@
 {
-  "author": "Kaiban Markdown Contributors",
+  "author": "Kaiban Board Contributors",
   "categories": [
     "Other"
   ],
@@ -106,14 +106,14 @@
           "type": "string"
         }
       },
-      "title": "Kaiban Markdown"
+      "title": "Kaiban Board"
     },
     "viewsContainers": {
       "activitybar": [
         {
           "icon": "$(checklist)",
-          "id": "kaiban-markdown",
-          "title": "Kaiban Markdown"
+          "id": "kaibanboard",
+          "title": "Kaiban Board"
         }
       ]
     }
@@ -134,7 +134,7 @@
     "typescript": "5.9.3",
     "vitest": "4.0.16"
   },
-  "displayName": "Kaiban Markdown",
+  "displayName": "Kaiban Board",
   "icon": "assets/icon.png",
   "engines": {
     "vscode": "^1.105.0"
@@ -155,11 +155,11 @@
     ]
   },
   "main": "./out/extension.js",
-  "name": "kaiban-md",
-  "publisher": "kaiban-md",
+  "name": "kaibanboardcom",
+  "publisher": "shipshitdev",
   "repository": {
     "type": "git",
-    "url": "https://github.com/kaiban-md/kaiban-md"
+    "url": "https://github.com/shipshitdev/kaibanboard.com"
   },
   "scripts": {
     "check": "biome check src/",

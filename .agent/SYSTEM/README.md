@@ -1,6 +1,6 @@
 # SYSTEM - Core Documentation
 
-This folder contains the core documentation for the Kaiban Markdown project.
+This folder contains the core documentation for the Kaiban Board project.
 
 ## Contents
 

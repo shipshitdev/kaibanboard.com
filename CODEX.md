@@ -1,4 +1,4 @@
-# Kaiban Markdown
+# Kaiban Board
 
 Codex-specific entry point. Documentation in `.agent/`.
 

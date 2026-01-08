@@ -1,4 +1,4 @@
-# Kaiban Markdown - Quick Start Guide
+# Kaiban Board - Quick Start Guide
 
 ## What You Built
 
@@ -18,7 +18,10 @@ An AI-powered VS Code extension that:
 ### Step 1: Open Extension Folder
 
 ```bash
-code /Users/decod3rs/www/genfeedai/kaiban.md/
+# Clone the repo first, then open it
+git clone https://github.com/shipshitdev/kaibanboard.com.git
+cd kaibanboard.com
+code .
 ```
 
 ### Step 2: Press F5
@@ -155,10 +158,10 @@ If you want to modify the extension:
 When you're happy with it:
 
 ```bash
-cd kaiban.md
+cd kaibanboard.com
 bun install -g @vscode/vsce
 vsce package
-code --install-extension kaiban-md-0.1.0.vsix
+code --install-extension shipshitdev.kaibanboardcom-0.2.0.vsix
 ```
 
 Then it's available in ALL VS Code windows!
@@ -195,9 +198,9 @@ With your current 208 tasks:
 
 ---
 
-## About Kaiban Markdown
+## About Kaiban Board
 
-**Kaiban Markdown** = **AI** + **Kanban** + **Markdown**
+**Kaiban Board** = **AI** + **Kanban** + **Markdown**
 
 Perfect for developers who want intelligent task visualization in their markdown workflows.
 
@@ -208,7 +211,10 @@ Perfect for developers who want intelligent task visualization in their markdown
 The extension is **100% ready to use**. Just:
 
 ```bash
-code /Users/decod3rs/www/genfeedai/kaiban.md/
+cd kaibanboard.com
+code .
 ```
 
 Press F5, and enjoy your AI-powered Kanban board!
+
+Visit **[kaibanboard.com](https://kaibanboard.com)** for more information.

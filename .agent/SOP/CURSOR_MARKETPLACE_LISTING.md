@@ -1,8 +1,8 @@
-# Cursor Marketplace Listing - Kaiban Markdown
+# Cursor Marketplace Listing - Kaiban Board
 
 ## Extension Title
 
-**Kaiban Markdown** - AI-Powered Kanban Board for Markdown Tasks
+**Kaiban Board** - AI-Powered Kanban Board for Markdown Tasks
 
 ## Short Description
 
@@ -12,7 +12,7 @@ An intelligent Kanban board extension for Cursor that visualizes tasks from `.ag
 
 ### Overview
 
-Kaiban Markdown brings the power of Kanban boards directly to your Cursor IDE, designed specifically for developers who manage tasks using markdown files in the `.agent/TASKS|PRDS` architecture. Perfect for AI agents, solo developers, and teams that prefer markdown-based task management.
+Kaiban Board brings the power of Kanban boards directly to your Cursor IDE, designed specifically for developers who manage tasks using markdown files in the `.agent/TASKS|PRDS` architecture. Perfect for AI agents, solo developers, and teams that prefer markdown-based task management.
 
 ### Key Features
 
@@ -113,13 +113,13 @@ kanban, markdown, task-management, ai, productivity, agent, prd, product-require
 
 1. Open Cursor IDE
 2. Go to Extensions marketplace
-3. Search for "Kaiban Markdown"
+3. Search for "Kaiban Board"
 4. Click Install
 5. Reload Cursor if prompted
 
 ## Support
 
-- **GitHub**: [kaiban-md/kaiban-md](https://github.com/kaiban-md/kaiban-md)
+- **GitHub**: [kaibanboard/kaibanboard](https://github.com/kaibanboard/kaibanboard)
 - **Issues**: Report bugs and feature requests on GitHub
 - **Documentation**: See README.md in the repository
 
@@ -147,9 +147,9 @@ MIT License - see LICENSE file for details
 
 ## Author
 
-Kaiban Markdown Contributors
+Kaiban Board Contributors
 
 ---
 
-**Ready to streamline your task management? Install Kaiban Markdown today!**
+**Ready to streamline your task management? Install Kaiban Board today!**
 

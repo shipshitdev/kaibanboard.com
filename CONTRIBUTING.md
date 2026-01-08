@@ -1,14 +1,14 @@
-# Contributing to Kaiban Markdown
+# Contributing to Kaiban Board
 
-Thank you for your interest in contributing to Kaiban Markdown! This document provides guidelines and instructions for contributing.
+Thank you for your interest in contributing to Kaiban Board! This document provides guidelines and instructions for contributing.
 
 ## Getting Started
 
 1. **Fork the repository** on GitHub
 2. **Clone your fork** locally:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/kaiban-md.git
-   cd kaiban-md
+   git clone https://github.com/YOUR_USERNAME/kaibanboard.com.git
+   cd kaibanboard.com
    ```
 3. **Install dependencies**:
    ```bash
@@ -133,7 +133,7 @@ The extension is automatically published via GitHub Actions when a release is cr
    ```bash
    # Create an account at https://open-vsx.org
    # Go to Settings → Access Tokens → Generate New Token
-   npx ovsx create-namespace kaiban-md -p YOUR_TOKEN
+   npx ovsx create-namespace shipshitdev -p YOUR_TOKEN
    ```
 
 2. **Add GitHub Secrets**:
@@ -165,9 +165,9 @@ The extension is automatically published via GitHub Actions when a release is cr
 ### Verification
 
 After publishing, verify the extension appears:
-- **Cursor**: Search "Kaiban" in Extensions (may take a few hours to sync)
-- **Open VSX**: https://open-vsx.org/extension/kaiban-md/kaiban-md
-- **VS Code**: https://marketplace.visualstudio.com/items?itemName=kaiban-md.kaiban-md
+- **Cursor**: Search "Kaiban Board" in Extensions (may take a few hours to sync)
+- **Open VSX**: https://open-vsx.org/extension/shipshitdev/kaibanboardcom
+- **VS Code**: https://marketplace.visualstudio.com/items?itemName=shipshitdev.kaibanboardcom
 
 ## Questions?
 
@@ -175,5 +175,5 @@ Feel free to open an issue for discussion or questions about contributing.
 
 ---
 
-Thank you for contributing to Kaiban Markdown! 🎉
+Thank you for contributing to Kaiban Board! 🎉
 

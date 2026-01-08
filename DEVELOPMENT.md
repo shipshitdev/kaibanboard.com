@@ -1,6 +1,6 @@
 # Development Guide
 
-This guide explains how to test and develop the Kaiban Markdown extension in **Cursor on Mac**.
+This guide explains how to test and develop the Kaiban Board extension in **Cursor on Mac**.
 
 ## Quick Start: Testing the Extension
 

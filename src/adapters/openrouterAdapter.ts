@@ -162,7 +162,7 @@ export class OpenRouterAdapter implements AIProviderAdapter {
         headers: {
           Authorization: `Bearer ${apiKey}`,
           "Content-Type": "application/json",
-          "HTTP-Referer": "https://github.com/kaiban-md/kaiban-md",
+          "HTTP-Referer": "https://github.com/shipshitdev/kaibanboard.com",
           "X-Title": "Kaiban Markdown",
         },
         body: JSON.stringify({
@@ -229,7 +229,7 @@ export class OpenRouterAdapter implements AIProviderAdapter {
         headers: {
           Authorization: `Bearer ${apiKey}`,
           "Content-Type": "application/json",
-          "HTTP-Referer": "https://github.com/kaiban-md/kaiban-md",
+          "HTTP-Referer": "https://github.com/shipshitdev/kaibanboard.com",
           "X-Title": "Kaiban Markdown",
         },
         body: JSON.stringify({

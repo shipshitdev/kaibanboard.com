@@ -1,4 +1,4 @@
-# Project Summary - Kaiban Markdown
+# Project Summary - Kaiban Board
 
 **Purpose:** Quick overview of current project state.
 **Last Updated:** 2025-01-27

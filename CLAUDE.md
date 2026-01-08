@@ -1,4 +1,4 @@
-# Kaiban Markdown
+# Kaiban Board
 
 Claude-specific entry point. Documentation in `.agent/`.
 

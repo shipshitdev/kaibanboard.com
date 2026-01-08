@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "kaiban-md",
+      "name": "kaibanboardcom",
       "dependencies": {
         "lucide": "0.562.0",
       },

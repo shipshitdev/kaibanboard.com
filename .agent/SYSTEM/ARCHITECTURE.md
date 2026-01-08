@@ -148,5 +148,5 @@ bun run package        # Create .vsix file
 ---
 
 **Website:** https://kaibanboard.com  
-**Marketplace:** [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=kaiban-md.kaiban-md)  
-**GitHub:** [github.com/kaiban-md/kaiban-md](https://github.com/kaiban-md/kaiban-md)
+**Marketplace:** [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=shipshitdev.kaibanboardcom)  
+**GitHub:** [github.com/shipshitdev/kaibanboard.com](https://github.com/shipshitdev/kaibanboard.com)

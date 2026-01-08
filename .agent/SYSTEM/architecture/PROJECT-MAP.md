@@ -1,4 +1,4 @@
-# Project Map - Kaiban Markdown
+# Project Map - Kaiban Board
 
 **Purpose:** Quick reference for project structure and responsibilities.
 **Last Updated:** 2025-01-27

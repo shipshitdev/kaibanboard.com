@@ -1,10 +1,10 @@
-# Kaiban Markdown - VS Code Extension
+# Kaiban Board - VS Code Extension
 
 ![Project Type](https://img.shields.io/badge/Project-App-blue)
 ![Status](https://img.shields.io/badge/status-development-orange)
 ![Version](https://img.shields.io/badge/version-pre--release-red)
 ![Production](https://img.shields.io/badge/production-not%20ready-red)
-![License](https://img.shields.io/github/license/kaiban-md/kaiban-md)
+![License](https://img.shields.io/github/license/shipshitdev/kaibanboard.com)
 
 An AI-powered Kanban board for visualizing markdown tasks from `.agent/TASKS/` directories with PRD preview support.
 
@@ -47,8 +47,8 @@ The extension reads task files in this format:
 
 ### Option 1: Development Mode
 
-1. Copy the `kaiban.md` folder to your workspace
-2. Open it in VS Code
+1. Clone the repository to your workspace
+2. Open the folder in VS Code
 3. Run `bun install`
 4. Press `F5` to launch Extension Development Host
 5. In the new window, run command: `Kaiban: Show Markdown Board`
@@ -56,10 +56,10 @@ The extension reads task files in this format:
 ### Option 2: Package and Install
 
 ```bash
-cd kaiban.md
+cd kaibanboard.com
 bun install
 bunx @vscode/vsce package
-code --install-extension kaiban-md-0.1.0.vsix
+code --install-extension shipshitdev.kaibanboardcom-0.2.0.vsix
 ```
 
 ## Getting Started
@@ -86,7 +86,7 @@ Create a new file in `.agent/TASKS/` (e.g., `my-first-task.md`) with this templa
 
 **ID:** task-001
 **Label:** My First Task
-**Description:** This is my first task in Kaiban Markdown
+**Description:** This is my first task in Kaiban Board
 **Type:** Feature
 **Status:** Backlog
 **Priority:** Medium
@@ -371,9 +371,9 @@ bun run watch
 
 See [DEVELOPMENT.md](./DEVELOPMENT.md) for complete testing, debugging, and development guide.
 
-## About Kaiban Markdown
+## About Kaiban Board
 
-**Kaiban Markdown** combines:
+**Kaiban Board** combines:
 
 - **AI** - Intelligent task management
 - **Kanban** - Visual workflow organization
@@ -387,4 +387,4 @@ MIT
 
 ## Website
 
-Visit us at **kaiban.md** (coming soon!)
+Visit us at **[kaibanboard.com](https://kaibanboard.com)**
