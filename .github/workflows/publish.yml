@@ -4,16 +4,6 @@ on:
   release:
     types: [published]
   workflow_dispatch:
-    inputs:
-      publish_target:
-        description: 'Where to publish'
-        required: true
-        default: 'both'
-        type: choice
-        options:
-          - openvsx
-          - vscode
-          - both
 
 jobs:
   publish:
@@ -67,26 +57,11 @@ jobs:
           fi
           echo "Found VSIX: ${{ steps.ext-info.outputs.vsix_path }}"
 
-      # Publish to Open VSX (for Cursor marketplace)
+      # Publish to Open VSX (Cursor marketplace)
       - name: Publish to Open VSX
-        if: |
-          (github.event_name == 'release') ||
-          (github.event_name == 'workflow_dispatch' && (inputs.publish_target == 'openvsx' || inputs.publish_target == 'both'))
-        run: |
-          npx ovsx publish ${{ steps.ext-info.outputs.vsix_path }} -p ${{ secrets.OVSX_PAT }}
+        run: npx ovsx publish ${{ steps.ext-info.outputs.vsix_path }} -p ${{ secrets.OVSX_PAT }}
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
-
-      # Publish to VS Code Marketplace (optional)
-      - name: Publish to VS Code Marketplace
-        if: |
-          (github.event_name == 'release' && secrets.VSCE_PAT != '') ||
-          (github.event_name == 'workflow_dispatch' && (inputs.publish_target == 'vscode' || inputs.publish_target == 'both'))
-        run: |
-          npx vsce publish --packagePath ${{ steps.ext-info.outputs.vsix_path }} -p ${{ secrets.VSCE_PAT }}
-        env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        continue-on-error: true
 
       - name: Upload VSIX artifact
         uses: actions/upload-artifact@v4
