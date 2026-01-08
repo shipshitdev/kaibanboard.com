@@ -1,65 +1,44 @@
-# Tasks
+# Tasks Directory
 
-**Purpose:** Track actionable work items.
-**Last Updated:** 2025-12-28
+This folder contains task files for Kaiban Board development.
+
+## Task Format
+
+Each task file should follow this structure:
+
+```markdown
+## Task: Task Title
+
+**ID:** unique-task-id
+**Label:** Task Title
+**Description:** Brief description
+**Type:** Feature | Bug | Enhancement | Research
+**Status:** Backlog | To Do | Doing | Testing | Done | Blocked
+**Priority:** High | Medium | Low
+**Created:** YYYY-MM-DD
+**Updated:** YYYY-MM-DD
+**PRD:** [Link](../PRDS/related-prd.md)
 
 ---
+
+## Details
+
+Detailed task description, acceptance criteria, etc.
+```
+
+## Status Definitions
+
+- **Backlog:** Not yet prioritized
+- **To Do:** Ready to start
+- **Doing:** In active development
+- **Testing:** Code complete, under review/test
+- **Done:** Completed and verified
+- **Blocked:** Waiting on external dependency
 
 ## Quick Capture
 
-Use `INBOX.md` for quick task capture. Process regularly into proper task files or complete immediately.
+Use `INBOX.md` for quick task ideas, then create proper task files.
 
 ---
 
-## Task File Format
-
-For larger tasks, create individual files:
-
-```markdown
-# Task: Title
-
-**Priority:** P0 (Critical) / P1 (High) / P2 (Medium) / P3 (Low)
-**Status:** Not Started / In Progress / Blocked / Complete
-**Created:** YYYY-MM-DD
-**Updated:** YYYY-MM-DD
-
-## Description
-
-What needs to be done.
-
-## Acceptance Criteria
-
-- [ ] Criterion 1
-- [ ] Criterion 2
-
-## Notes
-
-Additional context.
-```
-
----
-
-## Task States
-
-- **Not Started** - Task created but not begun
-- **In Progress** - Currently being worked on
-- **Blocked** - Waiting on something
-- **Complete** - Done and verified
-
----
-
-## Priority Levels
-
-- **P0 (Critical)** - Drop everything, fix now
-- **P1 (High)** - Do this sprint/week
-- **P2 (Medium)** - Do when P0/P1 clear
-- **P3 (Low)** - Nice to have
-
----
-
-## Best Practices
-
-1. Keep tasks actionable and specific
-2. Update status as work progresses
-3. Link to relevant code/PRs
-4. Archive completed tasks periodically
+**Last Updated:** 2026-01-08

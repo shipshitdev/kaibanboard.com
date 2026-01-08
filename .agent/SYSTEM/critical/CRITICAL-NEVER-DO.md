@@ -1,124 +1,103 @@
-# CRITICAL: Never Do This
+# Critical Rules - NEVER DO
 
-**Purpose:** Quick reference for violations that break builds, lose data, or violate architecture.
-**Read this FIRST before making ANY changes.**
-**Last Updated:** 2025-12-28
+**These rules MUST NEVER be violated. They protect users and maintain extension integrity.**
 
 ---
 
-## File Management
+## Security
 
-### Never Delete Required Files
+### 🚫 NEVER Commit API Keys
+- API keys MUST use `context.secrets` (SecretStorage)
+- Never log or display API keys
+- Never hardcode keys in source files
 
-These files MUST exist at project root:
-- `AGENTS.md`
-- `CLAUDE.md`
-- `CODEX.md`
-- `README.md`
-
-### Never Create Root-Level .md Files
-
-Only these 4 `.md` files allowed at project root:
-1. `AGENTS.md`
-2. `CLAUDE.md`
-3. `CODEX.md`
-4. `README.md`
-
-Everything else goes in `.agent/`.
-
----
-
-## Session Files
-
-### One File Per Day
-
-**Correct:**
-```
-.agent/SESSIONS/2025-01-15.md
-```
-
-**Wrong:**
-```
-.agent/SESSIONS/2025-01-15-feature.md  ❌
-.agent/SESSIONS/FEATURE-2025-01-15.md  ❌
-```
-
-Multiple sessions same day → Same file, Session 1, Session 2, etc.
-
----
-
-## Git
-
-### Never Commit Without Approval
-
-- Don't run `git commit` unless explicitly asked
-- Don't run `git push` unless explicitly asked
-- Make changes, show diff, wait for approval
-
-### Never Force Push to Main
-
-- No `git push --force` to main/master
-- No `git reset --hard` on shared branches
-
----
-
-## Coding
-
-### Never Use `any` Type
-
+### 🚫 NEVER Use innerHTML with User Content
 ```typescript
-// Wrong
-function process(data: any) { }
+// BAD - XSS vulnerability
+element.innerHTML = userContent;
 
-// Correct
-function process(data: UserData) { }
+// GOOD - Use textContent or sanitize
+element.textContent = userContent;
 ```
 
-### Never Skip Error Handling
+### 🚫 NEVER Disable CSP in Webview
+- Always use nonce-based script loading
+- Never set `enableScripts: false` with `allowScripts: true`
 
+## Stability
+
+### 🚫 NEVER Block the Extension Host
 ```typescript
-// Wrong
-const result = await operation();
+// BAD - Blocks UI
+const result = longRunningSync();
 
-// Correct
+// GOOD - Async
+const result = await longRunningAsync();
+```
+
+### 🚫 NEVER Forget to Dispose Subscriptions
+```typescript
+// ALWAYS add to subscriptions
+context.subscriptions.push(
+  vscode.commands.registerCommand(...)
+);
+```
+
+### 🚫 NEVER Modify Files Without User Awareness
+- Status changes via drag-drop are explicit user actions (OK)
+- Batch file modifications MUST show progress/confirmation
+- Never delete user files automatically
+
+## Quality
+
+### 🚫 NEVER Use `any` Type Without Comment
+```typescript
+// BAD
+const data: any = response;
+
+// ACCEPTABLE (with justification)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const data: any = legacyApiResponse; // Legacy API returns untyped data
+```
+
+### 🚫 NEVER Skip Error Handling for External APIs
+```typescript
+// BAD
+const response = await fetch(url);
+const data = await response.json();
+
+// GOOD
 try {
-  const result = await operation();
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const data = await response.json();
 } catch (error) {
-  logger.error('Operation failed', error);
-  throw error;
+  vscode.window.showErrorMessage(`API error: ${error.message}`);
 }
 ```
 
-### Never Use console.log
+### 🚫 NEVER Ship Without Testing
+- Run `bun run test` before every commit
+- Test in both VS Code and Cursor
+- Test in both light and dark themes
 
-Use a logging service instead.
+## User Experience
 
----
+### 🚫 NEVER Show Raw Error Messages to Users
+```typescript
+// BAD
+vscode.window.showErrorMessage(error.stack);
 
-## Project-Specific Rules
+// GOOD
+vscode.window.showErrorMessage('Failed to connect to AI provider. Check your API key.');
+console.error('AI connection error:', error);
+```
 
-<!-- Add your project-specific "never do" rules below -->
-
----
-
-## Pre-Code Checklist
-
-Before writing ANY code:
-
-- [ ] Read this file
-- [ ] Check `../RULES.md` for patterns
-- [ ] Search for similar implementations
-- [ ] Understand existing code before modifying
-
----
-
-## If You Violate These Rules
-
-1. **Acknowledge** - Don't hide it
-2. **Fix properly** - No workarounds
-3. **Document** - Add to session file
-4. **Learn** - Update this file if needed
+### 🚫 NEVER Make Breaking Changes Without Migration
+- If task format changes, support both old and new
+- Provide upgrade path for configuration changes
+- Document migration in CHANGELOG
 
 ---
 
-**5 minutes reading this = hours saved debugging later.**
+**If you're unsure about any of these rules, ask before proceeding.**

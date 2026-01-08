@@ -123,6 +123,52 @@ When reporting bugs or suggesting features:
 
 Be respectful and inclusive. We welcome contributors from all backgrounds and experience levels.
 
+## Publishing (Maintainers Only)
+
+The extension is automatically published via GitHub Actions when a release is created.
+
+### One-Time Setup
+
+1. **Create Open VSX Namespace**:
+   ```bash
+   # Create an account at https://open-vsx.org
+   # Go to Settings → Access Tokens → Generate New Token
+   npx ovsx create-namespace kaiban-md -p YOUR_TOKEN
+   ```
+
+2. **Add GitHub Secrets**:
+   - Go to repository Settings → Secrets and variables → Actions
+   - Add these secrets:
+     - `OVSX_PAT`: Your Open VSX personal access token (required for Cursor marketplace)
+     - `VSCE_PAT`: VS Code Marketplace token (optional, for VS Code marketplace)
+
+3. **To get VS Code Marketplace token** (optional):
+   - Go to https://dev.azure.com
+   - Create a Personal Access Token with "Marketplace (Manage)" scope
+   - Create publisher at https://marketplace.visualstudio.com/manage
+
+### Publishing Process
+
+**Automatic (Recommended)**:
+1. Update version in `package.json`:
+   ```bash
+   bun run version:patch  # or version:minor, version:major
+   ```
+2. Commit the version change
+3. Create a GitHub release with tag matching the version (e.g., `v0.2.1`)
+4. The workflow automatically publishes to Open VSX (and VS Code if configured)
+
+**Manual**:
+- Go to Actions → "Publish Extension" → "Run workflow"
+- Choose target: `openvsx`, `vscode`, or `both`
+
+### Verification
+
+After publishing, verify the extension appears:
+- **Cursor**: Search "Kaiban" in Extensions (may take a few hours to sync)
+- **Open VSX**: https://open-vsx.org/extension/kaiban-md/kaiban-md
+- **VS Code**: https://marketplace.visualstudio.com/items?itemName=kaiban-md.kaiban-md
+
 ## Questions?
 
 Feel free to open an issue for discussion or questions about contributing.

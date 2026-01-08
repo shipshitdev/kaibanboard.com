@@ -1,129 +1,146 @@
-# Coding Rules - Kaiban Markdown
+# Kaiban Board - Coding Rules
 
-**Purpose:** Coding standards and patterns for this project.
-**Last Updated:** 2025-12-28
-
----
-
-## General Principles
-
-1. **Follow existing patterns** - Search for 3+ similar implementations before writing new code
-2. **Quality over speed** - Think through implementations before coding
-3. **No inline types** - Define interfaces/types in dedicated files
-4. **No `any` types** - Use proper TypeScript types
-5. **No `console.log`** - Use a logging service
+**Purpose:** Coding standards and development guidelines  
+**Last Updated:** 2026-01-08
 
 ---
+
+## General Rules
+
+1. **TypeScript Only:** All source code in TypeScript
+2. **Biome Linting:** Run `bun run check` before commits
+3. **Test Coverage:** Maintain >80% coverage for core modules
+4. **No Any Types:** Avoid `any` - use proper types or `unknown`
 
 ## File Organization
 
+### Source Files (`src/`)
+
+```
+src/
+├── extension.ts        # Entry point - keep minimal
+├── kanbanView.ts       # Webview logic
+├── taskParser.ts       # Markdown parsing
+├── adapters/           # External service adapters
+├── services/           # Business logic
+├── types/              # Type definitions
+├── utils/              # Pure utility functions
+└── config/             # Configuration
+```
+
 ### Naming Conventions
 
-- **Directories:** lowercase with hyphens (`user-settings/`)
-- **Files:** kebab-case (`user-service.ts`)
-- **Components:** PascalCase (`UserProfile.tsx`)
-- **Interfaces:** PascalCase with `I` prefix (`IUserProfile`)
+- **Files:** `kebab-case.ts`
+- **Classes:** `PascalCase`
+- **Functions/Variables:** `camelCase`
+- **Constants:** `UPPER_SNAKE_CASE`
+- **Types/Interfaces:** `PascalCase`
 
-### Import Order
+## Code Style
 
-1. External packages
-2. Internal packages/aliases
-3. Relative imports
-4. Types/interfaces
+### Imports
 
 ```typescript
-// External
-import { useState } from 'react';
+// External imports first
+import * as vscode from 'vscode';
 
-// Internal aliases
-import { Button } from '@components/ui';
-import { UserService } from '@services/user';
-
-// Relative
-import { helpers } from './utils';
-
-// Types
-import type { IUser } from '@interfaces/user';
+// Internal imports second, sorted alphabetically
+import { parseTask } from './taskParser';
+import { AIService } from './services/ai-service';
+import type { Task } from './types';
 ```
 
----
-
-## TypeScript
-
-### Do
-
-- Use strict mode
-- Define return types for functions
-- Use path aliases (`@components/`, `@services/`)
-- Export types from dedicated files
-
-### Don't
-
-- Use `any` type
-- Use inline interface definitions
-- Use relative imports for shared code
-- Ignore TypeScript errors
-
----
-
-## Error Handling
+### Error Handling
 
 ```typescript
-try {
-  const result = await operation();
-  return result;
-} catch (error) {
-  logger.error('Operation failed', { error, context });
-  throw new AppError('User-friendly message', error);
-}
+// Use Result pattern for recoverable errors
+type Result<T, E = Error> = { ok: true; value: T } | { ok: false; error: E };
+
+// Throw only for unrecoverable errors
+throw new Error('Unrecoverable: ...');
 ```
 
----
+### VS Code Extension Patterns
+
+```typescript
+// Dispose subscriptions properly
+context.subscriptions.push(
+  vscode.commands.registerCommand('kaiban.showBoard', () => {}),
+  vscode.workspace.onDidChangeTextDocument(handler)
+);
+
+// Use SecretStorage for API keys
+const key = await context.secrets.get('kaiban.openai.apiKey');
+```
 
 ## Testing
 
-- Write tests for business logic
-- Use descriptive test names
-- Mock external dependencies
-- Test edge cases
+### Test File Naming
 
----
+- Unit tests: `[module].test.ts` (same directory)
+- Integration tests: `test/integration/[feature].test.ts`
 
-## Git
+### Test Structure
+
+```typescript
+describe('TaskParser', () => {
+  describe('parseTaskFile', () => {
+    it('should parse basic task metadata', () => {
+      // Arrange
+      const markdown = '...';
+      
+      // Act
+      const result = parseTaskFile(markdown);
+      
+      // Assert
+      expect(result.status).toBe('To Do');
+    });
+  });
+});
+```
+
+## Webview Guidelines
+
+### HTML/CSS in Webview
+
+- Use VS Code CSS variables for theming
+- Escape all user content
+- No inline scripts (CSP)
+
+```typescript
+// Generate nonce for CSP
+const nonce = getNonce();
+
+// Use vscode-webview-ui-toolkit when possible
+```
+
+## Git Workflow
 
 ### Commit Messages
 
 ```
-type(scope): description
-
-[optional body]
-
-[optional footer]
+feat: add PRD preview panel
+fix: resolve task parsing for multi-line descriptions
+docs: update README with installation guide
+refactor: extract AI service from kanbanView
+test: add coverage for cursor adapter
 ```
 
-Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
+### Branch Names
 
-### Branch Naming
+```
+feature/prd-preview
+fix/task-parsing-multiline
+docs/installation-guide
+```
 
-- `feature/description`
-- `fix/description`
-- `chore/description`
+## Critical Rules (NEVER DO)
 
----
-
-## Documentation
-
-- Document public APIs
-- Add JSDoc for complex functions
-- Keep README up to date
-- Document architectural decisions in `SYSTEM/architecture/DECISIONS.md`
+1. **Never commit API keys** - Use SecretStorage
+2. **Never use `eval()` or `innerHTML` with user content** - XSS risk
+3. **Never block the extension host** - Use async/await
+4. **Never modify files without user consent** - Always prompt
 
 ---
 
-## Project-Specific Rules
-
-<!-- Add your project-specific rules below -->
-
----
-
-**Remember:** When in doubt, check existing code for patterns.
+**See also:** `SYSTEM/critical/CRITICAL-NEVER-DO.md`

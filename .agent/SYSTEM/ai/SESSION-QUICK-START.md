@@ -1,95 +1,89 @@
-# Session Quick Start
+# Session Quick Start - Kaiban Board
 
-**Read this at the START of every session.**
-
----
-
-## Before You Start
-
-1. **Read critical rules:**
-   - `../critical/CRITICAL-NEVER-DO.md`
-
-2. **Check today's session file:**
-   - `../../SESSIONS/2025-12-28.md` (if exists, read it first)
-
-3. **Review recent context:**
-   - Last 2-3 session files for context
+**For AI Agents Starting a New Session**
 
 ---
 
-## During Session
+## 1. Check Current State
 
-### Track Everything
+```bash
+# Check git status
+git status
 
-- Decisions made and why
-- Files changed
-- Patterns used
-- Mistakes and fixes
-
-### Follow Patterns
-
-- Check `../RULES.md` for coding standards
-- Search for similar implementations before writing new code
-- Use existing utilities and helpers
-
-### Ask When Unsure
-
-- Security implications
-- Breaking changes
-- Architecture decisions
-
----
-
-## After Session
-
-### Document in Session File
-
-Add entry to `../../SESSIONS/YYYY-MM-DD.md`:
-
-```markdown
-## Session N: Brief Description
-
-**Duration:** ~X hours
-**Status:** Complete / In Progress
-
-**What was done:**
-- Task 1
-- Task 2
-
-**Files changed:**
-- `path/to/file.ts` - what changed
-
-**Decisions:**
-- Decision with rationale
-
-**Next steps:**
-- [ ] Next task
+# Check for any TODO items
+cat .agent/TASKS/INBOX.md
 ```
 
-### Update Task Status
+## 2. Key Files to Know
 
-Mark completed tasks in `../../TASKS/`
+| File | Purpose |
+|------|---------|
+| `src/extension.ts` | Extension entry point, command registration |
+| `src/kanbanView.ts` | Main UI logic, webview panel |
+| `src/taskParser.ts` | Markdown task parsing |
+| `src/services/ai-service.ts` | AI provider orchestration |
+| `package.json` | Extension manifest (commands, config) |
+
+## 3. Development Commands
+
+```bash
+# Install dependencies
+bun install
+
+# Watch mode (auto-compile)
+bun run watch
+
+# Run tests
+bun run test
+
+# Check linting
+bun run check
+
+# Package extension
+bun run package
+```
+
+## 4. Testing Changes
+
+1. Open project in VS Code/Cursor
+2. Press `F5` to launch Extension Development Host
+3. In new window: `Cmd+Shift+P` → "Kaiban: Show Markdown Board"
+4. After changes: `Cmd+R` in Extension Host to reload
+
+## 5. Common Tasks
+
+### Adding a New Command
+
+1. Add command to `package.json` under `contributes.commands`
+2. Register handler in `src/extension.ts` in `activate()`
+3. Implement logic in appropriate service/module
+
+### Modifying Webview UI
+
+1. Edit HTML template in `src/kanbanView.ts`
+2. Use VS Code CSS variables for theming
+3. Test in both light and dark themes
+
+### Adding AI Provider
+
+1. Create adapter in `src/adapters/[provider].ts`
+2. Register in `src/services/ai-service.ts`
+3. Add config options in `package.json`
+
+## 6. Critical Rules
+
+- **Never commit API keys** - Use SecretStorage
+- **Always dispose subscriptions** - Prevent memory leaks
+- **Escape user content** - Prevent XSS in webview
+- **Test before commit** - Run `bun run test`
+
+## 7. Session Documentation
+
+After completing work, update:
+- `.agent/SESSIONS/YYYY-MM-DD.md` - What was done
+- `.agent/TASKS/INBOX.md` - Any new TODOs
+- `CHANGELOG.md` - If shipping a release
 
 ---
 
-## Session File Rules
-
-- **ONE file per day:** `YYYY-MM-DD.md`
-- Multiple sessions same day = Session 1, Session 2, etc. in SAME file
-- Never create `YYYY-MM-DD-description.md` (wrong!)
-
----
-
-## Quick Reference
-
-| What | Where |
-|------|-------|
-| Coding rules | `../RULES.md` |
-| Critical violations | `../critical/CRITICAL-NEVER-DO.md` |
-| Architecture | `../ARCHITECTURE.md` |
-| Tasks | `../../TASKS/` |
-| Session template | `../../SESSIONS/TEMPLATE.md` |
-
----
-
-**Remember:** Document as you go, not at the end.
+**Full docs:** `.agent/SYSTEM/ARCHITECTURE.md`
