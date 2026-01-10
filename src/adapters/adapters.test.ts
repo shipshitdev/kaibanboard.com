@@ -1,4 +1,4 @@
-import { exec } from "child_process";
+import { exec } from "node:child_process";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as vscode from "vscode";
 import type { StreamChunk, TaskPrompt } from "../types/aiProvider";
@@ -1031,7 +1031,7 @@ describe("CursorCloudAdapter", () => {
         { uri: { fsPath: "/workspace" } },
       ] as unknown as readonly vscode.WorkspaceFolder[];
       vi.mocked(vscode.extensions.getExtension).mockReturnValue(undefined);
-      vi.mocked(exec).mockImplementationOnce((cmd, opts, callback) => {
+      vi.mocked(exec).mockImplementationOnce((_cmd, opts, callback) => {
         if (typeof opts === "function") {
           callback = opts;
         }

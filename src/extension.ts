@@ -1,3 +1,5 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
 import * as vscode from "vscode";
 import { CursorCloudAdapter } from "./adapters/cursorCloudAdapter";
 import { OpenAIAdapter } from "./adapters/openaiAdapter";
@@ -7,6 +9,7 @@ import { ApiKeyManager } from "./config/apiKeyManager";
 import { KanbanViewProvider } from "./kanbanView";
 import { generatePRD, generateSimplePRDTemplate } from "./services/prdGenerator";
 import { ProviderRegistry } from "./services/providerRegistry";
+import { SkillService } from "./services/skillService";
 import { generateSimpleTaskTemplate, generateTask } from "./services/taskGenerator";
 import type { ProviderType } from "./types/aiProvider";
 import {
@@ -597,6 +600,163 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.executeCommand("kaiban.showBoard");
       }
     });
+
+  // Check for .agent folder and offer to initialize
+  checkAgentFolderInit(context);
+}
+
+/**
+ * Check if .agent folder exists and offer to create it
+ * Uses agent-folder-init skill if enabled, otherwise creates basic structure
+ */
+async function checkAgentFolderInit(_context: vscode.ExtensionContext) {
+  const workspaceFolder = getWorkspaceFolder();
+  if (!workspaceFolder) return;
+
+  const agentPath = path.join(workspaceFolder.uri.fsPath, ".agent");
+  const skillService = new SkillService();
+  const skillSettings = skillService.getSettings();
+
+  // Required subfolders
+  const requiredFolders = ["TASKS", "PRDS", "SESSIONS", "SYSTEM"];
+
+  if (!fs.existsSync(agentPath)) {
+    // No .agent folder - offer to create
+    const result = await vscode.window.showInformationMessage(
+      "No .agent folder found. Initialize project structure for Kaiban Board?",
+      "Initialize",
+      "Skip"
+    );
+
+    if (result === "Initialize") {
+      if (skillSettings.useAgentFolderInit) {
+        // Use skill via Claude CLI
+        const projectName = path.basename(workspaceFolder.uri.fsPath);
+        await skillService.runAgentFolderInit(projectName);
+        vscode.window.showInformationMessage("Running agent-folder-init via Claude CLI...");
+      } else {
+        // Create basic structure directly
+        await createBasicAgentStructure(agentPath, requiredFolders);
+        vscode.window.showInformationMessage(".agent folder structure created successfully!");
+      }
+    }
+  } else {
+    // .agent exists - check for missing subfolders (don't override existing)
+    const missing = requiredFolders.filter((f) => !fs.existsSync(path.join(agentPath, f)));
+
+    if (missing.length > 0) {
+      const result = await vscode.window.showInformationMessage(
+        `Missing .agent subfolders: ${missing.join(", ")}. Create them?`,
+        "Create",
+        "Skip"
+      );
+
+      if (result === "Create") {
+        for (const folder of missing) {
+          fs.mkdirSync(path.join(agentPath, folder), { recursive: true });
+        }
+        vscode.window.showInformationMessage(`Created missing folders: ${missing.join(", ")}`);
+      }
+    }
+  }
+}
+
+/**
+ * Create basic .agent folder structure without using skills
+ */
+async function createBasicAgentStructure(agentPath: string, folders: string[]) {
+  // Create main .agent folder
+  fs.mkdirSync(agentPath, { recursive: true });
+
+  // Create subfolders
+  for (const folder of folders) {
+    fs.mkdirSync(path.join(agentPath, folder), { recursive: true });
+  }
+
+  // Create basic CLAUDE.md file
+  const claudeMdPath = path.join(path.dirname(agentPath), "CLAUDE.md");
+  if (!fs.existsSync(claudeMdPath)) {
+    const claudeMdContent = `# ${path.basename(path.dirname(agentPath))}
+
+Claude-specific entry point. Documentation in \`.agent/\`.
+
+## Commands
+
+Check \`.agent/SYSTEM/RULES.md\` for coding standards.
+
+## Sessions
+
+Document all work in \`.agent/SESSIONS/YYYY-MM-DD.md\` (one file per day).
+`;
+    fs.writeFileSync(claudeMdPath, claudeMdContent, "utf-8");
+  }
+
+  // Create basic RULES.md
+  const rulesPath = path.join(agentPath, "SYSTEM", "RULES.md");
+  const rulesContent = `# Coding Standards
+
+## General
+
+- Follow existing code patterns
+- Write clean, readable code
+- Add comments for complex logic
+
+## Testing
+
+- Test all new features
+- Run tests before committing
+
+## Documentation
+
+- Document public APIs
+- Update README for major changes
+`;
+  fs.writeFileSync(rulesPath, rulesContent, "utf-8");
+
+  // Create session template
+  const templatePath = path.join(agentPath, "SESSIONS", "TEMPLATE.md");
+  const templateContent = `# Sessions: YYYY-MM-DD
+
+**Summary:** Brief 3-5 word summary
+
+---
+
+## Session 1: Brief Description
+
+**Duration:** ~X hours
+**Status:** Complete / In Progress
+
+### What was done
+
+- Task 1
+- Task 2
+
+### Files changed
+
+- \`path/to/file.ts\` - what changed
+
+### Decisions
+
+- **Decision:** What was decided
+  - **Context:** Why this was needed
+  - **Rationale:** Why this choice
+
+### Mistakes and fixes
+
+- **Mistake:** What went wrong
+- **Fix:** How resolved
+- **Prevention:** How to avoid
+
+### Next steps
+
+- [ ] Next task 1
+- [ ] Next task 2
+
+---
+
+**Total sessions today:** 1
+`;
+  fs.writeFileSync(templatePath, templateContent, "utf-8");
 }
 
 export function deactivate() {

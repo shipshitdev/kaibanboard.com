@@ -17,6 +17,7 @@ export interface Task {
   filePath: string;
   completed: boolean;
   project: string;
+  order?: number; // Order within the current status column
   // Agent metadata for AI loop
   claimedBy: string;
   claimedAt: string;
@@ -83,6 +84,9 @@ export class TaskParser {
       } else if (line.startsWith("**PRD:**")) {
         const match = line.match(/^\*\*PRD:\*\*\s*\[Link\]\((.+)\)$/);
         if (match) metadata.prd = match[1].trim();
+      } else if (line.startsWith("**Order:**")) {
+        const match = line.match(/^\*\*Order:\*\*\s*(\d+)$/);
+        if (match) metadata.order = parseInt(match[1], 10);
       } else if (line.startsWith("**Claimed-By:**")) {
         metadata.claimedBy = line.replace("**Claimed-By:**", "").trim();
       } else if (line.startsWith("**Claimed-At:**")) {
@@ -126,6 +130,7 @@ export class TaskParser {
       filePath,
       completed,
       project: projectName,
+      order: metadata.order !== undefined ? (metadata.order as number) : undefined,
       // Agent metadata
       claimedBy: String(metadata.claimedBy || ""),
       claimedAt: String(metadata.claimedAt || ""),
@@ -239,6 +244,7 @@ export class TaskParser {
    * Write task file in structured format
    */
   public writeTask(task: Task): void {
+    const orderLine = task.order !== undefined ? `**Order:** ${task.order}\n` : "";
     const content = `## Task: ${task.label}
 
 **ID:** ${task.id}
@@ -247,7 +253,7 @@ export class TaskParser {
 **Type:** ${task.type}
 **Status:** ${task.status}
 **Priority:** ${task.priority}
-**Created:** ${task.created}
+${orderLine}**Created:** ${task.created}
 **Updated:** ${task.updated}
 **PRD:** [Link](${task.prdPath})
 
@@ -262,7 +268,8 @@ export class TaskParser {
    */
   public async updateTaskStatus(
     taskId: string,
-    newStatus: "Backlog" | "To Do" | "Doing" | "Testing" | "Done" | "Blocked"
+    newStatus: "Backlog" | "To Do" | "Doing" | "Testing" | "Done" | "Blocked",
+    order?: number
   ): Promise<void> {
     const tasks = await this.parseTasks();
     const task = tasks.find((t) => t.id === taskId);
@@ -275,16 +282,31 @@ export class TaskParser {
     const content = fs.readFileSync(task.filePath, "utf-8");
     const lines = content.split("\n");
 
-    // Update status and timestamp
+    // Update status, order (if provided), and timestamp
     const now = new Date().toISOString();
+    let orderLineExists = false;
     const updatedLines = lines.map((line) => {
       if (line.startsWith("**Status:**")) {
         return `**Status:** ${newStatus}`;
+      } else if (line.startsWith("**Order:**")) {
+        orderLineExists = true;
+        if (order !== undefined) {
+          return `**Order:** ${order}`;
+        }
+        return line;
       } else if (line.startsWith("**Updated:**")) {
         return `**Updated:** ${now}`;
       }
       return line;
     });
+
+    // If order is provided but order line doesn't exist, insert it after Priority
+    if (order !== undefined && !orderLineExists) {
+      const priorityIndex = updatedLines.findIndex((line) => line.startsWith("**Priority:**"));
+      if (priorityIndex >= 0) {
+        updatedLines.splice(priorityIndex + 1, 0, `**Order:** ${order}`);
+      }
+    }
 
     // Write back to file
     fs.writeFileSync(task.filePath, updatedLines.join("\n"), "utf-8");
@@ -293,6 +315,46 @@ export class TaskParser {
     if (task.prdPath) {
       await this.updatePRDStatus(task.filePath, task.prdPath, newStatus);
     }
+  }
+
+  /**
+   * Update task order by ID
+   */
+  public async updateTaskOrder(taskId: string, order: number): Promise<void> {
+    const tasks = await this.parseTasks();
+    const task = tasks.find((t) => t.id === taskId);
+
+    if (!task) {
+      throw new Error(`Task with ID ${taskId} not found`);
+    }
+
+    // Read the file content
+    const content = fs.readFileSync(task.filePath, "utf-8");
+    const lines = content.split("\n");
+
+    // Update order and timestamp
+    const now = new Date().toISOString();
+    let orderLineExists = false;
+    const updatedLines = lines.map((line) => {
+      if (line.startsWith("**Order:**")) {
+        orderLineExists = true;
+        return `**Order:** ${order}`;
+      } else if (line.startsWith("**Updated:**")) {
+        return `**Updated:** ${now}`;
+      }
+      return line;
+    });
+
+    // If order line doesn't exist, insert it after Priority
+    if (!orderLineExists) {
+      const priorityIndex = updatedLines.findIndex((line) => line.startsWith("**Priority:**"));
+      if (priorityIndex >= 0) {
+        updatedLines.splice(priorityIndex + 1, 0, `**Order:** ${order}`);
+      }
+    }
+
+    // Write back to file
+    fs.writeFileSync(task.filePath, updatedLines.join("\n"), "utf-8");
   }
 
   /**

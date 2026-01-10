@@ -14,6 +14,10 @@ This is the `.agent/` folder containing AI agent documentation, session tracking
 
 **READ FIRST:** `SYSTEM/ai/SESSION-QUICK-START.md`
 
+## Documentation
+
+**Feature Documentation:** See `SYSTEM/FEATURES.md` for comprehensive documentation of all Kaiban Board features.
+
 ## Directory Structure
 
 ```
@@ -21,6 +25,7 @@ This is the `.agent/` folder containing AI agent documentation, session tracking
 ├── README.md                    # This file - Navigation hub
 ├── SYSTEM/
 │   ├── ARCHITECTURE.md          # Technical architecture
+│   ├── FEATURES.md              # Complete feature documentation
 │   ├── PRD.md                   # Product requirements
 │   ├── RULES.md                 # Coding standards
 │   ├── ai/                      # AI agent protocols

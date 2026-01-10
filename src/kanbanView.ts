@@ -6,6 +6,7 @@ import { OpenRouterAdapter } from "./adapters/openrouterAdapter";
 import { ReplicateAdapter } from "./adapters/replicateAdapter";
 import type { ApiKeyManager } from "./config/apiKeyManager";
 import { ProviderRegistry } from "./services/providerRegistry";
+import { SkillService } from "./services/skillService";
 import { type Task, TaskParser } from "./taskParser";
 import type { ProviderType, TaskPrompt } from "./types/aiProvider";
 import { Icons } from "./utils/lucideIcons";
@@ -14,14 +15,24 @@ export class KanbanViewProvider {
   private panel: vscode.WebviewPanel | undefined;
   private taskParser: TaskParser;
   private providerRegistry: ProviderRegistry;
+  private skillService: SkillService;
   private pollingIntervals: Map<string, NodeJS.Timeout> = new Map();
   private skipNextConfigRefresh = false;
+
+  // Batch execution state
+  private batchExecutionQueue: string[] = [];
+  private currentBatchIndex = 0;
+  private isBatchExecuting = false;
+  private batchExecutionCancelled = false;
+  private batchCompletedCount = 0;
+  private batchSkippedCount = 0;
 
   constructor(
     private context: vscode.ExtensionContext,
     apiKeyManager?: ApiKeyManager
   ) {
     this.taskParser = new TaskParser();
+    this.skillService = new SkillService();
     // biome-ignore lint/style/noNonNullAssertion: apiKeyManager is checked before use
     this.providerRegistry = new ProviderRegistry(apiKeyManager!);
 
@@ -102,6 +113,9 @@ export class KanbanViewProvider {
           case "updateTaskStatus":
             await this.updateTaskStatus(message.taskId, message.newStatus);
             break;
+          case "updateTaskOrder":
+            await this.handleUpdateTaskOrder(message.taskId, message.order, message.newStatus);
+            break;
           case "getAvailableProviders":
             await this.handleGetAvailableProviders();
             break;
@@ -116,6 +130,24 @@ export class KanbanViewProvider {
             break;
           case "saveColumnSettings":
             await this.saveColumnSettings(message.columns);
+            break;
+          case "executeRalphCommand":
+            await this.handleExecuteRalphCommand(message.taskId);
+            break;
+          case "executeViaClaude":
+            await this.handleExecuteViaClaude(message.taskId);
+            break;
+          case "stopClaudeExecution":
+            await this.handleStopClaudeExecution(message.taskId);
+            break;
+          case "createTask":
+            await vscode.commands.executeCommand("kaiban.createTask");
+            break;
+          case "startBatchExecution":
+            await this.handleStartBatchExecution(message.taskIds);
+            break;
+          case "cancelBatchExecution":
+            await this.handleCancelBatchExecution();
             break;
         }
       },
@@ -266,6 +298,29 @@ export class KanbanViewProvider {
       await this.refresh();
     } catch (error) {
       vscode.window.showErrorMessage(`Failed to update task status: ${error}`);
+    }
+  }
+
+  private async handleUpdateTaskOrder(
+    taskId: string,
+    order: number,
+    newStatus?: string
+  ): Promise<void> {
+    try {
+      if (newStatus) {
+        // If status changed, update both status and order
+        await this.taskParser.updateTaskStatus(
+          taskId,
+          newStatus as Task["status"],
+          order
+        );
+      } else {
+        // Only update order
+        await this.taskParser.updateTaskOrder(taskId, order);
+      }
+      await this.refresh();
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to update task order: ${error}`);
     }
   }
 
@@ -506,6 +561,564 @@ export class KanbanViewProvider {
     }
   }
 
+  private async handleExecuteRalphCommand(taskId: string) {
+    try {
+      const tasks = await this.taskParser.parseTasks();
+      const task = tasks.find((t) => t.id === taskId);
+
+      if (!task) {
+        throw new Error(`Task ${taskId} not found`);
+      }
+
+      // Get ralph configuration
+      const config = vscode.workspace.getConfiguration("kaiban.ralph");
+      const ralphCommand = config.get<string>("command", "/ralph-loop");
+      const maxIterations = config.get<number>("maxIterations", 5);
+      const completionPromise = config.get<string>("completionPromise", "");
+
+      // Load PRD content if available
+      let prdContent = "";
+      if (task.prdPath) {
+        prdContent = await this.loadPRDContentRaw(task.prdPath);
+      }
+
+      // Build task description
+      let taskDescription = `Task: ${task.label}`;
+      if (task.description) {
+        taskDescription += `\n\n${task.description}`;
+      }
+      if (prdContent) {
+        taskDescription += `\n\nPRD Context:\n${prdContent.substring(0, 500)}${prdContent.length > 500 ? "..." : ""}`;
+      }
+
+      // Escape quotes in description for command
+      const escapedDescription = taskDescription.replace(/"/g, '\\"');
+
+      // Build command
+      let command = "";
+      if (ralphCommand.startsWith("/")) {
+        // Claude Code plugin command format
+        command = `${ralphCommand} "${escapedDescription}" --max-iterations ${maxIterations}`;
+        if (completionPromise) {
+          command += ` --completion-promise "${completionPromise}"`;
+        }
+      } else if (ralphCommand.includes("bash") || ralphCommand.endsWith(".sh")) {
+        // Bash script format
+        command = `${ralphCommand} "${escapedDescription}"`;
+      } else {
+        // Generic command format
+        command = `${ralphCommand} "${escapedDescription}" --max-iterations ${maxIterations}`;
+      }
+
+      // Get or create terminal
+      let terminal = vscode.window.activeTerminal;
+      if (!terminal) {
+        terminal = vscode.window.createTerminal("Ralph Loop");
+      }
+
+      // Show terminal and execute command
+      terminal.show();
+      terminal.sendText(command);
+
+      // Notify user
+      vscode.window.showInformationMessage(`Ralph command executed for task: ${task.label}`);
+
+      // Notify webview of success
+      if (this.panel) {
+        this.panel.webview.postMessage({
+          command: "ralphCommandExecuted",
+          taskId,
+        });
+      }
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to execute ralph command: ${error}`);
+      if (this.panel) {
+        this.panel.webview.postMessage({
+          command: "ralphCommandError",
+          taskId,
+          error: String(error),
+        });
+      }
+    }
+  }
+
+  private claudeTerminals: Map<string, vscode.Terminal> = new Map();
+  private completionWatchers: Map<string, vscode.FileSystemWatcher> = new Map();
+  private completionPollers: Map<string, NodeJS.Timeout> = new Map();
+
+  private async handleExecuteViaClaude(taskId: string) {
+    try {
+      const tasks = await this.taskParser.parseTasks();
+      const task = tasks.find((t) => t.id === taskId);
+
+      if (!task) {
+        throw new Error(`Task ${taskId} not found`);
+      }
+
+      // Get configuration
+      const config = vscode.workspace.getConfiguration("kaiban");
+      const claudePath = config.get<string>("claude.executablePath", "claude");
+      const additionalFlags = config.get<string>("claude.additionalFlags", "");
+      const useRalphLoop = config.get<boolean>("claude.useRalphLoop", false);
+      const promptTemplate = config.get<string>(
+        "claude.promptTemplate",
+        "Read the task file at {taskFile} and implement it. The task contains a link to the PRD with full requirements. Update the task status to Done when complete."
+      );
+      const ralphCommand = config.get<string>("ralph.command", "/ralph-loop:ralph-loop");
+      const maxIterations = config.get<number>("ralph.maxIterations", 5);
+      const completionPromise = config.get<string>("ralph.completionPromise", "TASK COMPLETE");
+
+      // Build task instruction from template
+      const taskInstruction = promptTemplate.replace("{taskFile}", task.filePath);
+
+      // Build the command based on whether to use ralph-loop
+      const flags = additionalFlags ? `${additionalFlags} ` : "";
+      let fullCommand: string;
+
+      if (useRalphLoop) {
+        // Use ralph-loop plugin
+        const ralphCmd = `${ralphCommand} "${taskInstruction}" --completion-promise "${completionPromise}" --max-iterations ${maxIterations}`;
+        fullCommand = `${claudePath} ${flags}"${ralphCmd}"`;
+      } else {
+        // Run Claude directly with the prompt
+        fullCommand = `${claudePath} ${flags}"${taskInstruction}"`;
+      }
+
+      // Get workspace folder
+      const workspaceFolders = vscode.workspace.workspaceFolders;
+      const cwd = workspaceFolders?.[0]?.uri.fsPath;
+
+      // Create terminal
+      const terminalName = `Claude: ${task.label.substring(0, 20)}`;
+      const terminal = vscode.window.createTerminal({
+        name: terminalName,
+        cwd: cwd,
+      });
+
+      // Store terminal reference
+      this.claudeTerminals.set(taskId, terminal);
+
+      terminal.show();
+      terminal.sendText(fullCommand);
+
+      // Update task status to Doing
+      await this.taskParser.updateTaskStatus(taskId, "Doing");
+
+      // Notify user
+      vscode.window.showInformationMessage(`Executing via Claude: ${task.label}`);
+
+      // Notify webview
+      if (this.panel) {
+        this.panel.webview.postMessage({
+          command: "claudeExecutionStarted",
+          taskId,
+        });
+      }
+
+      // Set up completion tracking
+      this.watchForCompletion(taskId);
+
+      // Refresh board to show updated status
+      await this.refresh();
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to execute via Claude: ${error}`);
+      if (this.panel) {
+        this.panel.webview.postMessage({
+          command: "claudeExecutionError",
+          taskId,
+          error: String(error),
+        });
+      }
+    }
+  }
+
+  private watchForCompletion(taskId: string) {
+    // Watch task file for status changes
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders) return;
+
+    const tasksPath = vscode.Uri.joinPath(workspaceFolders[0].uri, ".agent", "TASKS");
+    const watcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(tasksPath, "**/*.md")
+    );
+
+    const checkCompletion = async () => {
+      const tasks = await this.taskParser.parseTasks();
+      const task = tasks.find((t) => t.id === taskId);
+
+      if (task && (task.status === "Done" || task.status === "Testing")) {
+        // Task completed - clean up
+        this.cleanupCompletionTracking(taskId);
+
+        // Check if session documenter is enabled
+        const skillSettings = this.skillService.getSettings();
+        if (skillSettings.useSessionDocumenter) {
+          // Prompt to document session
+          const result = await vscode.window.showInformationMessage(
+            `Task "${task.label}" completed! Document this session?`,
+            "Document Session",
+            "Skip"
+          );
+
+          if (result === "Document Session") {
+            await this.skillService.runSessionDocumenter(task.label);
+          }
+        } else {
+          vscode.window.showInformationMessage(`Task completed: ${task.label}`);
+        }
+
+        await this.refresh();
+      }
+    };
+
+    watcher.onDidChange(checkCompletion);
+    this.completionWatchers.set(taskId, watcher);
+    this.context.subscriptions.push(watcher);
+
+    // Also poll periodically (in case file watcher misses changes)
+    const pollInterval = setInterval(async () => {
+      await checkCompletion();
+    }, 10000); // Check every 10 seconds
+
+    this.completionPollers.set(taskId, pollInterval);
+
+    // Clean up after 30 minutes max
+    setTimeout(
+      () => {
+        this.cleanupCompletionTracking(taskId);
+      },
+      30 * 60 * 1000
+    );
+  }
+
+  private cleanupCompletionTracking(taskId: string) {
+    const watcher = this.completionWatchers.get(taskId);
+    if (watcher) {
+      watcher.dispose();
+      this.completionWatchers.delete(taskId);
+    }
+
+    const poller = this.completionPollers.get(taskId);
+    if (poller) {
+      clearInterval(poller);
+      this.completionPollers.delete(taskId);
+    }
+  }
+
+  private async handleStopClaudeExecution(taskId: string) {
+    const terminal = this.claudeTerminals.get(taskId);
+    if (terminal) {
+      terminal.dispose(); // Kill the terminal
+      this.claudeTerminals.delete(taskId);
+      this.cleanupCompletionTracking(taskId);
+
+      vscode.window.showInformationMessage("Stopped Claude execution");
+
+      if (this.panel) {
+        this.panel.webview.postMessage({
+          command: "claudeExecutionStopped",
+          taskId,
+        });
+      }
+    }
+  }
+
+  // ============ Batch Execution Methods ============
+
+  private async handleStartBatchExecution(taskIds: string[]) {
+    if (this.isBatchExecuting) {
+      vscode.window.showWarningMessage("Batch execution already in progress");
+      return;
+    }
+
+    if (!taskIds || taskIds.length === 0) {
+      vscode.window.showWarningMessage("No tasks to execute");
+      return;
+    }
+
+    this.batchExecutionQueue = [...taskIds];
+    this.currentBatchIndex = 0;
+    this.isBatchExecuting = true;
+    this.batchExecutionCancelled = false;
+    this.batchCompletedCount = 0;
+    this.batchSkippedCount = 0;
+
+    // Notify webview
+    if (this.panel) {
+      this.panel.webview.postMessage({
+        command: "batchExecutionStarted",
+        total: taskIds.length,
+        taskIds,
+      });
+    }
+
+    vscode.window.showInformationMessage(`Starting batch execution of ${taskIds.length} tasks`);
+
+    // Start first task
+    await this.executeNextBatchTask();
+  }
+
+  private async executeNextBatchTask() {
+    // Check if cancelled
+    if (this.batchExecutionCancelled) {
+      this.finishBatchExecution(true);
+      return;
+    }
+
+    // Check if done
+    if (this.currentBatchIndex >= this.batchExecutionQueue.length) {
+      this.finishBatchExecution(false);
+      return;
+    }
+
+    const taskId = this.batchExecutionQueue[this.currentBatchIndex];
+
+    // Send progress update
+    if (this.panel) {
+      this.panel.webview.postMessage({
+        command: "batchTaskStarted",
+        taskId,
+        index: this.currentBatchIndex,
+        total: this.batchExecutionQueue.length,
+      });
+
+      this.panel.webview.postMessage({
+        command: "batchExecutionProgress",
+        current: this.currentBatchIndex + 1,
+        total: this.batchExecutionQueue.length,
+        completed: this.batchCompletedCount,
+        skipped: this.batchSkippedCount,
+      });
+    }
+
+    // Execute the task
+    await this.executeBatchTask(taskId);
+  }
+
+  private async executeBatchTask(taskId: string) {
+    try {
+      const tasks = await this.taskParser.parseTasks();
+      const task = tasks.find((t) => t.id === taskId);
+
+      if (!task) {
+        throw new Error(`Task ${taskId} not found`);
+      }
+
+      // Get configuration (same pattern as handleExecuteViaClaude)
+      const config = vscode.workspace.getConfiguration("kaiban");
+      const claudePath = config.get<string>("claude.executablePath", "claude");
+      const additionalFlags = config.get<string>("claude.additionalFlags", "");
+      const useRalphLoop = config.get<boolean>("claude.useRalphLoop", true);
+      const promptTemplate = config.get<string>(
+        "claude.promptTemplate",
+        "Read the task file at {taskFile} and implement it. The task contains a link to the PRD with full requirements. Update the task status to Done when complete."
+      );
+      const ralphCommand = config.get<string>("ralph.command", "/ralph-loop:ralph-loop");
+      const maxIterations = config.get<number>("ralph.maxIterations", 5);
+      const completionPromise = config.get<string>("ralph.completionPromise", "TASK COMPLETE");
+
+      // Build command
+      const taskInstruction = promptTemplate.replace("{taskFile}", task.filePath);
+      const flags = additionalFlags ? `${additionalFlags} ` : "";
+      let fullCommand: string;
+
+      if (useRalphLoop) {
+        const escapedInstruction = taskInstruction.replace(/"/g, '\\"');
+        const escapedPromise = completionPromise.replace(/"/g, '\\"');
+        const ralphCmd = `${ralphCommand} \\"${escapedInstruction}\\" --completion-promise \\"${escapedPromise}\\" --max-iterations ${maxIterations}`;
+        fullCommand = `${claudePath} ${flags}"${ralphCmd}"`;
+      } else {
+        fullCommand = `${claudePath} ${flags}"${taskInstruction}"`;
+      }
+
+      // Get workspace folder
+      const workspaceFolders = vscode.workspace.workspaceFolders;
+      const cwd = workspaceFolders?.[0]?.uri.fsPath;
+
+      // Create terminal
+      const terminalName = `Batch: ${task.label.substring(0, 20)}`;
+      const terminal = vscode.window.createTerminal({
+        name: terminalName,
+        cwd: cwd,
+      });
+
+      // Store terminal reference
+      this.claudeTerminals.set(taskId, terminal);
+
+      terminal.show();
+      terminal.sendText(fullCommand);
+
+      // Update task status to Doing
+      await this.taskParser.updateTaskStatus(taskId, "Doing");
+
+      // Set up completion tracking for batch
+      this.watchForBatchCompletion(taskId);
+
+      // Refresh board
+      await this.refresh();
+    } catch (_error) {
+      // Task failed - mark as skipped and continue
+      this.batchSkippedCount++;
+
+      if (this.panel) {
+        this.panel.webview.postMessage({
+          command: "batchTaskCompleted",
+          taskId,
+          success: false,
+        });
+      }
+
+      // Move to next task
+      this.currentBatchIndex++;
+      await this.executeNextBatchTask();
+    }
+  }
+
+  private watchForBatchCompletion(taskId: string) {
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders) return;
+
+    const tasksPath = vscode.Uri.joinPath(workspaceFolders[0].uri, ".agent", "TASKS");
+    const watcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(tasksPath, "**/*.md")
+    );
+
+    const checkCompletion = async () => {
+      if (this.batchExecutionCancelled) return;
+
+      const tasks = await this.taskParser.parseTasks();
+      const task = tasks.find((t) => t.id === taskId);
+
+      if (task && (task.status === "Done" || task.status === "Testing")) {
+        // Task completed successfully
+        this.cleanupBatchTaskTracking(taskId);
+        this.batchCompletedCount++;
+
+        if (this.panel) {
+          this.panel.webview.postMessage({
+            command: "batchTaskCompleted",
+            taskId,
+            success: true,
+          });
+        }
+
+        // Move to next task
+        this.currentBatchIndex++;
+        await this.executeNextBatchTask();
+        await this.refresh();
+      }
+    };
+
+    watcher.onDidChange(checkCompletion);
+    this.completionWatchers.set(taskId, watcher);
+    this.context.subscriptions.push(watcher);
+
+    // Poll every 10 seconds (same as existing)
+    const pollInterval = setInterval(async () => {
+      await checkCompletion();
+    }, 10000);
+
+    this.completionPollers.set(taskId, pollInterval);
+
+    // Timeout after 30 minutes - skip task and continue
+    setTimeout(
+      () => {
+        if (this.completionWatchers.has(taskId) && this.isBatchExecuting) {
+          this.cleanupBatchTaskTracking(taskId);
+          this.batchSkippedCount++;
+
+          if (this.panel) {
+            this.panel.webview.postMessage({
+              command: "batchTaskCompleted",
+              taskId,
+              success: false,
+            });
+          }
+
+          this.currentBatchIndex++;
+          this.executeNextBatchTask();
+        }
+      },
+      30 * 60 * 1000
+    );
+  }
+
+  private cleanupBatchTaskTracking(taskId: string) {
+    // Clean up watcher
+    const watcher = this.completionWatchers.get(taskId);
+    if (watcher) {
+      watcher.dispose();
+      this.completionWatchers.delete(taskId);
+    }
+
+    // Clean up poller
+    const poller = this.completionPollers.get(taskId);
+    if (poller) {
+      clearInterval(poller);
+      this.completionPollers.delete(taskId);
+    }
+
+    // Clean up terminal reference
+    this.claudeTerminals.delete(taskId);
+  }
+
+  private async handleCancelBatchExecution() {
+    if (!this.isBatchExecuting) return;
+
+    this.batchExecutionCancelled = true;
+
+    // Stop current task's terminal
+    const currentTaskId = this.batchExecutionQueue[this.currentBatchIndex];
+    if (currentTaskId) {
+      const terminal = this.claudeTerminals.get(currentTaskId);
+      if (terminal) {
+        terminal.dispose();
+      }
+      this.cleanupBatchTaskTracking(currentTaskId);
+    }
+
+    vscode.window.showInformationMessage("Batch execution cancelled");
+  }
+
+  private finishBatchExecution(wasCancelled: boolean) {
+    this.isBatchExecuting = false;
+
+    const message = wasCancelled
+      ? `Batch execution cancelled. Completed: ${this.batchCompletedCount}, Remaining: ${this.batchExecutionQueue.length - this.currentBatchIndex}`
+      : `Batch execution complete. Completed: ${this.batchCompletedCount}, Skipped: ${this.batchSkippedCount}`;
+
+    vscode.window.showInformationMessage(message);
+
+    if (this.panel) {
+      if (wasCancelled) {
+        this.panel.webview.postMessage({
+          command: "batchExecutionCancelled",
+          current: this.currentBatchIndex,
+          total: this.batchExecutionQueue.length,
+          completed: this.batchCompletedCount,
+        });
+      } else {
+        this.panel.webview.postMessage({
+          command: "batchExecutionComplete",
+          total: this.batchExecutionQueue.length,
+          completed: this.batchCompletedCount,
+          skipped: this.batchSkippedCount,
+        });
+      }
+    }
+
+    // Reset state
+    this.batchExecutionQueue = [];
+    this.currentBatchIndex = 0;
+    this.batchCompletedCount = 0;
+    this.batchSkippedCount = 0;
+
+    // Final refresh
+    this.refresh();
+  }
+
+  // ============ End Batch Execution Methods ============
+
   private async loadPRDContentRaw(prdPath: string): Promise<string> {
     // Get PRD base path from configuration
     const config = vscode.workspace.getConfiguration("kaiban.prd");
@@ -596,17 +1209,35 @@ export class KanbanViewProvider {
     const config = vscode.workspace.getConfiguration("kaiban.columns");
     const enabledColumns = config.get<string[]>("enabled", ["To Do", "Doing", "Testing", "Done"]);
 
-    // Sort function: High > Medium > Low
-    const sortByPriority = (tasks: Task[]) => {
+    // Sort function: Order first (ascending), then priority (High > Medium > Low)
+    const sortTasksByOrderAndPriority = (tasks: Task[]) => {
       const priorityOrder = { High: 0, Medium: 1, Low: 2 };
-      return tasks.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
+      return tasks.sort((a, b) => {
+        // If both have order, sort by order first
+        if (a.order !== undefined && b.order !== undefined) {
+          if (a.order !== b.order) {
+            return a.order - b.order;
+          }
+          // Same order, fallback to priority
+          return priorityOrder[a.priority] - priorityOrder[b.priority];
+        }
+        // If only one has order, it comes first
+        if (a.order !== undefined && b.order === undefined) {
+          return -1;
+        }
+        if (a.order === undefined && b.order !== undefined) {
+          return 1;
+        }
+        // Neither has order, sort by priority
+        return priorityOrder[a.priority] - priorityOrder[b.priority];
+      });
     };
 
     // Sort tasks for ALL columns (not just enabled ones)
     const columnTasks: Record<string, Task[]> = {};
     let totalTasks = 0;
     for (const column of allColumns) {
-      const sorted = sortByPriority([...(groupedTasks[column] || [])]);
+      const sorted = sortTasksByOrderAndPriority([...(groupedTasks[column] || [])]);
       columnTasks[column] = sorted;
       // Only count tasks in enabled columns for isEmpty check
       if (enabledColumns.includes(column)) {
@@ -631,6 +1262,8 @@ export class KanbanViewProvider {
         task.agentStatus !== "running";
       const isAgentRunning = task.agentStatus === "running";
       const agentStatusClass = task.agentStatus ? `agent-${task.agentStatus}` : "";
+      const canExecuteViaClaude =
+        (isInToDo || isInDoing || isInTesting) && !isAgentRunning && task.status !== "Done";
 
       return `
         <div class="task-card ${priorityClass} ${completedClass} ${agentStatusClass}"
@@ -640,9 +1273,11 @@ export class KanbanViewProvider {
              data-prd-path="${task.prdPath}"
              data-status="${task.status}"
              data-label="${this.escapeHtml(task.label)}"
-             data-description="${this.escapeHtml(task.description || "")}">
+             data-description="${this.escapeHtml(task.description || "")}"
+             data-order="${task.order !== undefined ? task.order : ""}">
           <div class="task-header">
             <span class="task-title">${this.escapeHtml(task.label)}</span>
+            ${canExecuteViaClaude ? `<button class="play-stop-btn" onclick="event.stopPropagation(); toggleExecution('${task.id}')" title="Execute via Claude CLI">▶</button><button class="rate-limit-btn" onclick="event.stopPropagation(); triggerRateLimitFromUI('${task.id}')" title="Set rate limit wait timer">⏱</button>` : ""}
             ${task.completed ? '<span class="task-check">[Done]</span>' : ""}
           </div>
           <div class="task-meta">
@@ -1106,6 +1741,251 @@ export class KanbanViewProvider {
       50% { opacity: 0.5; }
     }
 
+    /* Play/Stop button on task cards */
+    .play-stop-btn {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      border: none;
+      border-radius: 4px;
+      padding: 2px 8px;
+      cursor: pointer;
+      font-size: 12px;
+      opacity: 0;
+      transition: opacity 0.2s, background 0.2s;
+      margin-left: 8px;
+      flex-shrink: 0;
+    }
+
+    .task-card:hover .play-stop-btn,
+    .play-stop-btn.running {
+      opacity: 1;
+    }
+
+    .play-stop-btn:hover {
+      background: var(--vscode-button-hoverBackground);
+    }
+
+    /* Stop button - red when running */
+    .play-stop-btn.running {
+      background: #ef4444;
+      color: white;
+    }
+
+    .play-stop-btn.running:hover {
+      background: #dc2626;
+    }
+
+    /* Rate limit trigger button - shows next to stop button when running */
+    .rate-limit-btn {
+      display: none;
+      background: #eab308;
+      color: black;
+      border: none;
+      border-radius: 4px;
+      width: 24px;
+      height: 24px;
+      cursor: pointer;
+      font-size: 12px;
+      margin-left: 4px;
+    }
+
+    .task-card.running .rate-limit-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .rate-limit-btn:hover {
+      background: #ca8a04;
+    }
+
+    /* Running state for task cards - prominent visual */
+    .task-card.running {
+      background: linear-gradient(135deg,
+        rgba(34, 197, 94, 0.15) 0%,
+        rgba(34, 197, 94, 0.05) 100%);
+      border-left: 4px solid #22c55e;
+      box-shadow: 0 0 12px rgba(34, 197, 94, 0.3);
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* Animated running indicator bar */
+    .task-card.running::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, #22c55e, transparent);
+      animation: running-bar 1.5s ease-in-out infinite;
+    }
+
+    @keyframes running-bar {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(100%); }
+    }
+
+    /* Rate limit countdown state */
+    .task-card.rate-limited {
+      background: linear-gradient(135deg,
+        rgba(234, 179, 8, 0.15) 0%,
+        rgba(234, 179, 8, 0.05) 100%);
+      border-left: 4px solid #eab308;
+      box-shadow: 0 0 12px rgba(234, 179, 8, 0.3);
+      position: relative;
+    }
+
+    .rate-limit-countdown {
+      display: none;
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.8);
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      z-index: 10;
+    }
+
+    .task-card.rate-limited .rate-limit-countdown {
+      display: flex;
+    }
+
+    .countdown-timer {
+      font-size: 24px;
+      font-weight: bold;
+      color: #eab308;
+      font-family: monospace;
+    }
+
+    .countdown-label {
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.7);
+      margin-bottom: 8px;
+    }
+
+    .countdown-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .countdown-btn {
+      padding: 4px 12px;
+      border: none;
+      border-radius: 4px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+
+    .countdown-btn.retry-now {
+      background: #22c55e;
+      color: white;
+    }
+
+    .countdown-btn.retry-now:hover {
+      background: #16a34a;
+    }
+
+    .countdown-btn.cancel {
+      background: #ef4444;
+      color: white;
+    }
+
+    .countdown-btn.cancel:hover {
+      background: #dc2626;
+    }
+
+    /* Rate limit banner - fixed at top */
+    .rate-limit-banner {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      background: linear-gradient(90deg, #eab308, #ca8a04);
+      color: black;
+      padding: 12px 20px;
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      z-index: 1000;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+    }
+
+    .rate-limit-banner.active {
+      display: flex;
+    }
+
+    .rate-limit-banner-content {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .rate-limit-banner-timer {
+      font-size: 24px;
+      font-weight: bold;
+      font-family: monospace;
+    }
+
+    .rate-limit-banner-task {
+      font-size: 14px;
+    }
+
+    .rate-limit-banner-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .rate-limit-banner-actions button {
+      padding: 6px 16px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: 500;
+    }
+
+    .rate-limit-banner-actions .retry-btn {
+      background: #22c55e;
+      color: white;
+    }
+
+    .rate-limit-banner-actions .cancel-btn {
+      background: rgba(0,0,0,0.3);
+      color: white;
+    }
+
+    /* Adjust body when banner is active */
+    body.has-rate-limit-banner {
+      padding-top: 60px;
+    }
+
+    /* PRD panel actions */
+    .prd-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .play-prd-btn {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      border: none;
+      border-radius: 4px;
+      padding: 4px 12px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: background 0.2s;
+    }
+
+    .play-prd-btn:hover {
+      background: var(--vscode-button-hoverBackground);
+    }
+
     /* Provider badges */
     .provider-badge {
       font-size: 9px;
@@ -1457,12 +2337,104 @@ export class KanbanViewProvider {
       overflow-x: auto;
       margin: 12px 0;
     }
+
+    /* Column header with actions */
+    .column-header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* Play All button */
+    .play-all-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      border: none;
+      border-radius: 4px;
+      padding: 3px 8px;
+      font-size: 11px;
+      cursor: pointer;
+      transition: opacity 0.2s, background 0.2s;
+    }
+
+    .play-all-btn:hover {
+      background: var(--vscode-button-hoverBackground);
+    }
+
+    .play-all-btn.running {
+      background: #ef4444;
+    }
+
+    .play-all-btn.running:hover {
+      background: #dc2626;
+    }
+
+    .play-all-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    /* Batch progress banner */
+    .batch-progress-banner {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--vscode-notifications-background);
+      border: 1px solid var(--vscode-notifications-border);
+      border-radius: 8px;
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+      z-index: 1000;
+    }
+
+    .batch-progress-content {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .batch-progress-icon {
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
+    .batch-progress-stats {
+      color: var(--vscode-descriptionForeground);
+      font-size: 12px;
+    }
+
+    .batch-cancel-btn {
+      background: transparent;
+      border: 1px solid var(--vscode-button-border, #444);
+      color: var(--vscode-foreground);
+      padding: 4px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    .batch-cancel-btn:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
   </style>
 </head>
 <body>
     <div class="header">
       <div class="title">Kaiban Markdown</div>
       <div class="header-actions">
+        <button class="action-btn secondary-btn icon-btn" onclick="createTask()" title="Create new task">
+          ${Icons.plus(16)}
+        </button>
         <select class="action-btn secondary-btn" id="sortSelect" onchange="onSortChange()" title="Sort tasks">
           <option value="default">Default</option>
           <option value="priority-asc">Priority ↑</option>
@@ -1557,7 +2529,16 @@ ${allColumns
     <div class="column column-${columnClass}${isHidden ? " hidden" : ""}" data-status="${column}">
       <div class="column-header">
         <span>${column}</span>
-        <span class="column-count">${tasks.length}</span>
+        <div class="column-header-actions">
+          ${
+            column === "To Do" && tasks.length > 0
+              ? `<button class="play-all-btn" onclick="event.stopPropagation(); toggleBatchExecution()" title="Execute all tasks via Claude CLI">
+                  ${Icons.play(12)} Play All
+                </button>`
+              : ""
+          }
+          <span class="column-count">${tasks.length}</span>
+        </div>
       </div>
       <div class="column-content">
         ${
@@ -1575,7 +2556,10 @@ ${allColumns
     <div class="prd-preview-panel" id="prdPanel" style="display: none; visibility: hidden;">
       <div class="prd-header">
         <span>PRD Preview</span>
-        <button class="close-prd-btn" onclick="closePRD()" title="Close PRD Panel">×</button>
+        <div class="prd-actions">
+          <button class="play-prd-btn" id="playPrdBtn" onclick="executePRD()" title="Execute via Claude CLI" style="display: none;">▶ Execute</button>
+          <button class="close-prd-btn" onclick="closePRD()" title="Close PRD Panel">×</button>
+        </div>
       </div>
       <div class="prd-content" id="prdContent">
         <div class="prd-placeholder">Select a task to view its PRD</div>
@@ -1598,6 +2582,28 @@ ${allColumns
       <div class="no-providers-warning" id="noProvidersWarning" style="display: none;">
         No AI providers configured. Please configure at least one provider via
         <a href="#" onclick="configureProviders()">Kaiban: Configure AI Providers</a> command.
+      </div>
+
+      <!-- Execution Method Selection -->
+      <div class="form-group">
+        <label>Execution Method:</label>
+        <div class="provider-options">
+          <label>
+            <input type="radio" name="executionMethod" value="ralph" id="ralphMethod" onchange="onExecutionMethodChange()">
+            Execute with Ralph Loop (Terminal Command)
+          </label>
+          <label>
+            <input type="radio" name="executionMethod" value="agent" id="agentMethod" checked onchange="onExecutionMethodChange()">
+            Send to AI Agent
+          </label>
+        </div>
+      </div>
+
+      <!-- Ralph Loop Section -->
+      <div class="form-group" id="ralphSection" style="display: none;">
+        <p style="font-size: 12px; color: var(--vscode-descriptionForeground); margin-top: 0;">
+          This will execute the ralph-loop command in your terminal with the task information.
+        </p>
       </div>
 
       <!-- Provider Selection -->
@@ -1628,7 +2634,7 @@ ${allColumns
       <div class="modal-actions">
         <button class="modal-btn modal-btn-cancel" onclick="hideAgentModal()">Cancel</button>
         <button class="modal-btn modal-btn-send" id="sendToAgentBtn" onclick="confirmSendToAgent()" disabled>
-          Send to Agent
+          Execute
         </button>
       </div>
     </div>
@@ -1645,6 +2651,156 @@ ${allColumns
     let currentAgentTaskId = null;
     let availableProviders = [];
     let availableModels = [];
+
+    // Claude execution state
+    let currentPrdTaskId = null;
+    let runningTasks = new Set();  // Track task IDs that are currently executing
+
+    // Rate limit state
+    let rateLimitTaskId = null;
+    let rateLimitEndTime = null;
+    let rateLimitInterval = null;
+
+    // Rate limit functions
+    function startRateLimitCountdown(taskId, waitSeconds) {
+      rateLimitTaskId = taskId;
+      rateLimitEndTime = Date.now() + (waitSeconds * 1000);
+
+      // Get task name
+      const card = document.querySelector(\`[data-task-id="\${taskId}"]\`);
+      const taskName = card ? card.dataset.label : 'Unknown task';
+      document.getElementById('rateLimitTaskName').textContent = taskName;
+
+      // Show banner
+      document.getElementById('rateLimitBanner').classList.add('active');
+      document.body.classList.add('has-rate-limit-banner');
+
+      // Update task card to show rate-limited state
+      if (card) {
+        card.classList.remove('running');
+        card.classList.add('rate-limited');
+      }
+
+      // Start countdown interval
+      rateLimitInterval = setInterval(updateRateLimitTimer, 1000);
+      updateRateLimitTimer();
+    }
+
+    function updateRateLimitTimer() {
+      if (!rateLimitEndTime) return;
+
+      const remaining = Math.max(0, rateLimitEndTime - Date.now());
+      const minutes = Math.floor(remaining / 60000);
+      const seconds = Math.floor((remaining % 60000) / 1000);
+
+      const timerStr = \`\${minutes.toString().padStart(2, '0')}:\${seconds.toString().padStart(2, '0')}\`;
+      document.getElementById('rateLimitTimer').textContent = timerStr;
+
+      if (remaining <= 0) {
+        // Timer expired - will be handled by extension auto-retry
+        clearRateLimitUI();
+      }
+    }
+
+    function retryRateLimitNow() {
+      if (rateLimitTaskId) {
+        vscode.postMessage({
+          command: 'retryAfterRateLimit',
+          taskId: rateLimitTaskId
+        });
+        clearRateLimitUI();
+      }
+    }
+
+    function cancelRateLimitWait() {
+      if (rateLimitTaskId) {
+        vscode.postMessage({
+          command: 'stopClaudeExecution',
+          taskId: rateLimitTaskId
+        });
+        clearRateLimitUI();
+      }
+    }
+
+    function clearRateLimitUI() {
+      if (rateLimitInterval) {
+        clearInterval(rateLimitInterval);
+        rateLimitInterval = null;
+      }
+
+      // Hide banner
+      document.getElementById('rateLimitBanner').classList.remove('active');
+      document.body.classList.remove('has-rate-limit-banner');
+
+      // Clear task card state
+      if (rateLimitTaskId) {
+        const card = document.querySelector(\`[data-task-id="\${rateLimitTaskId}"]\`);
+        if (card) {
+          card.classList.remove('rate-limited');
+        }
+      }
+
+      rateLimitTaskId = null;
+      rateLimitEndTime = null;
+    }
+
+    function triggerRateLimitFromUI(taskId) {
+      // Allow user to manually trigger rate limit wait from task card
+      const waitMinutes = prompt('Enter wait time in minutes:', '5');
+      if (waitMinutes && !isNaN(parseInt(waitMinutes))) {
+        const waitSeconds = parseInt(waitMinutes) * 60;
+        vscode.postMessage({
+          command: 'triggerRateLimitWait',
+          taskId: taskId,
+          waitSeconds: waitSeconds
+        });
+      }
+    }
+
+    // Claude CLI execution functions
+    function toggleExecution(taskId) {
+      if (runningTasks.has(taskId)) {
+        // Stop the execution
+        vscode.postMessage({
+          command: 'stopClaudeExecution',
+          taskId: taskId
+        });
+      } else {
+        // Start the execution
+        vscode.postMessage({
+          command: 'executeViaClaude',
+          taskId: taskId
+        });
+      }
+    }
+
+    function executePRD() {
+      if (currentPrdTaskId) {
+        toggleExecution(currentPrdTaskId);
+      }
+    }
+
+    function updateTaskRunningState(taskId, isRunning) {
+      const card = document.querySelector(\`[data-task-id="\${taskId}"]\`);
+      if (card) {
+        card.classList.toggle('running', isRunning);
+        const btn = card.querySelector('.play-stop-btn');
+        if (btn) {
+          btn.classList.toggle('running', isRunning);
+          btn.innerHTML = isRunning ? '⏹' : '▶';
+          btn.title = isRunning ? 'Stop execution' : 'Execute via Claude';
+        }
+      }
+
+      // Also update PRD panel button if this task is selected
+      if (currentPrdTaskId === taskId) {
+        const prdBtn = document.getElementById('playPrdBtn');
+        if (prdBtn) {
+          prdBtn.innerHTML = isRunning ? '⏹ Stop' : '▶ Execute';
+          prdBtn.classList.toggle('running', isRunning);
+        }
+      }
+    }
 
     // Agent modal functions
     function showAgentModal(taskId) {
@@ -1663,6 +2819,9 @@ ${allColumns
       document.getElementById('cursorOptions').style.display = 'none';
       document.getElementById('sendToAgentBtn').disabled = true;
       document.getElementById('noProvidersWarning').style.display = 'none';
+      document.getElementById('agentMethod').checked = true;
+      document.getElementById('ralphMethod').checked = false;
+      onExecutionMethodChange();
 
       // Show modal
       document.getElementById('agentModal').style.display = 'flex';
@@ -1710,37 +2869,88 @@ ${allColumns
       document.getElementById('sendToAgentBtn').disabled = !model;
     }
 
+    function onExecutionMethodChange() {
+      const ralphMethod = document.getElementById('ralphMethod').checked;
+      const agentMethod = document.getElementById('agentMethod').checked;
+      const ralphSection = document.getElementById('ralphSection');
+      const providerGroup = document.getElementById('providerSelectGroup');
+      const modelGroup = document.getElementById('modelSelectGroup');
+      const cursorOptions = document.getElementById('cursorOptions');
+      const sendBtn = document.getElementById('sendToAgentBtn');
+
+      if (ralphMethod) {
+        // Ralph Loop selected
+        ralphSection.style.display = 'block';
+        providerGroup.style.display = 'none';
+        modelGroup.style.display = 'none';
+        cursorOptions.style.display = 'none';
+        sendBtn.disabled = false;
+        sendBtn.textContent = 'Execute with Ralph';
+      } else if (agentMethod) {
+        // AI Agent selected
+        ralphSection.style.display = 'none';
+        providerGroup.style.display = 'block';
+        sendBtn.textContent = 'Send to Agent';
+        // Reset provider selection state
+        const provider = document.getElementById('providerSelect').value;
+        if (!provider) {
+          sendBtn.disabled = true;
+        } else {
+          onProviderChange();
+        }
+      }
+    }
+
     function confirmSendToAgent() {
       if (!currentAgentTaskId) return;
 
-      const provider = document.getElementById('providerSelect').value;
-      const model = document.getElementById('modelSelect').value;
-      const createPR = document.getElementById('createPR').checked;
+      const ralphMethod = document.getElementById('ralphMethod').checked;
+      const agentMethod = document.getElementById('agentMethod').checked;
 
-      if (!provider) {
-        alert('Please select a provider.');
+      if (ralphMethod) {
+        // Execute Ralph command
+        const btn = document.getElementById('sendToAgentBtn');
+        btn.disabled = true;
+        btn.innerHTML = 'Executing... <span class="loading-spinner"></span>';
+
+        vscode.postMessage({
+          command: 'executeRalphCommand',
+          taskId: currentAgentTaskId
+        });
         return;
       }
 
-      if (provider !== 'cursor' && !model) {
-        alert('Please select a model.');
-        return;
-      }
+      if (agentMethod) {
+        // Send to AI Agent (existing logic)
+        const provider = document.getElementById('providerSelect').value;
+        const model = document.getElementById('modelSelect').value;
+        const createPR = document.getElementById('createPR').checked;
 
-      // Show loading state
-      const btn = document.getElementById('sendToAgentBtn');
-      btn.disabled = true;
-      btn.innerHTML = 'Sending... <span class="loading-spinner"></span>';
-
-      vscode.postMessage({
-        command: 'sendToAgent',
-        taskId: currentAgentTaskId,
-        provider: provider,
-        model: model || undefined,
-        options: {
-          createPR: createPR
+        if (!provider) {
+          alert('Please select a provider.');
+          return;
         }
-      });
+
+        if (provider !== 'cursor' && !model) {
+          alert('Please select a model.');
+          return;
+        }
+
+        // Show loading state
+        const btn = document.getElementById('sendToAgentBtn');
+        btn.disabled = true;
+        btn.innerHTML = 'Sending... <span class="loading-spinner"></span>';
+
+        vscode.postMessage({
+          command: 'sendToAgent',
+          taskId: currentAgentTaskId,
+          provider: provider,
+          model: model || undefined,
+          options: {
+            createPR: createPR
+          }
+        });
+      }
     }
 
     function configureProviders() {
@@ -1877,16 +3087,60 @@ ${allColumns
         const taskId = draggedElement.dataset.taskId;
         const currentStatus = draggedElement.dataset.status;
 
-        // Only update if status changed
+        // Calculate new order based on drop position
+        // First, temporarily move the element to the correct position in DOM
+        const dropTarget = e.target.closest('.task-card');
+        if (dropTarget && dropTarget !== draggedElement && dropTarget.parentElement === column) {
+          // Insert before the target
+          column.insertBefore(draggedElement, dropTarget);
+        } else if (!dropTarget || dropTarget === draggedElement) {
+          // Dropped at end or on empty space - append to end
+          column.appendChild(draggedElement);
+        }
+
+        // Now calculate order based on actual DOM position
+        // Get all task cards in the column after DOM update
+        const allTasksInColumn = Array.from(column.querySelectorAll('.task-card'));
+        const droppedIndex = allTasksInColumn.indexOf(draggedElement);
+        
+        // Calculate order: if there are tasks before it, use their max order + 1
+        // Otherwise use index + 1
+        let newOrder = 1;
+        if (droppedIndex === 0) {
+          // First task - order is 1
+          newOrder = 1;
+        } else {
+          // Look at the task before it to determine order
+          const previousTask = allTasksInColumn[droppedIndex - 1];
+          const previousOrder = parseInt(previousTask.dataset.order || '0', 10);
+          if (previousOrder > 0) {
+            // Use previous order + 1
+            newOrder = previousOrder + 1;
+          } else {
+            // Previous task doesn't have order, use index + 1
+            newOrder = droppedIndex + 1;
+          }
+        }
+
+        // Update order and status if changed
         if (newStatus !== currentStatus) {
           vscode.postMessage({
-            command: 'updateTaskStatus',
+            command: 'updateTaskOrder',
             taskId: taskId,
+            order: newOrder,
             newStatus: newStatus
           });
-          // Re-store original order after task moves
-          setTimeout(() => storeOriginalOrder(), 100);
+        } else {
+          // Same column, just reordering
+          vscode.postMessage({
+            command: 'updateTaskOrder',
+            taskId: taskId,
+            order: newOrder
+          });
         }
+
+        // Re-store original order after task moves
+        setTimeout(() => storeOriginalOrder(), 100);
 
         // Remove drag-over class
         column.classList.remove('drag-over');
@@ -1912,9 +3166,16 @@ ${allColumns
         panel.setAttribute('data-visible', 'true');
       });
 
-      // Get the selected card to find the task file path
+      // Get the selected card to find the task file path and track for Claude execution
       const selectedCard = document.querySelector('.task-card.selected');
       const taskFilePath = selectedCard ? selectedCard.dataset.filepath : undefined;
+      currentPrdTaskId = selectedCard ? selectedCard.dataset.taskId : null;
+
+      // Show/hide the Execute button based on whether we have a task
+      const playBtn = document.getElementById('playPrdBtn');
+      if (playBtn) {
+        playBtn.style.display = currentPrdTaskId ? 'inline-block' : 'none';
+      }
 
       // Load PRD content with task file path for accurate resolution
       vscode.postMessage({
@@ -1956,6 +3217,107 @@ ${allColumns
     function refresh() {
       vscode.postMessage({ command: 'refresh' });
     }
+
+    // Create task handler
+    function createTask() {
+      vscode.postMessage({ command: 'createTask' });
+    }
+
+    // ============ Batch Execution Functions ============
+    let isBatchRunning = false;
+    let batchProgress = { current: 0, total: 0, completed: 0, skipped: 0 };
+
+    function toggleBatchExecution() {
+      if (isBatchRunning) {
+        cancelBatchExecution();
+      } else {
+        startBatchExecution();
+      }
+    }
+
+    function startBatchExecution() {
+      // Get all task IDs from "To Do" column
+      const toDoColumn = document.querySelector('.column[data-status="To Do"]');
+      if (!toDoColumn) return;
+
+      const tasks = Array.from(toDoColumn.querySelectorAll('.task-card'));
+      if (tasks.length === 0) {
+        alert('No tasks in To Do column');
+        return;
+      }
+
+      // Sort tasks by order (ascending), then by priority
+      tasks.sort((a, b) => {
+        const orderA = parseInt(a.dataset.order || '999999', 10);
+        const orderB = parseInt(b.dataset.order || '999999', 10);
+        
+        // If both have order, sort by order
+        if (orderA !== 999999 && orderB !== 999999) {
+          if (orderA !== orderB) {
+            return orderA - orderB;
+          }
+        } else if (orderA !== 999999) {
+          // a has order, b doesn't - a comes first
+          return -1;
+        } else if (orderB !== 999999) {
+          // b has order, a doesn't - b comes first
+          return 1;
+        }
+        
+        // Neither has order or same order - fallback to priority
+        const priorityOrder = { high: 0, medium: 1, low: 2 };
+        const priorityA = a.classList.contains('high') ? 'high' : 
+                          a.classList.contains('medium') ? 'medium' : 'low';
+        const priorityB = b.classList.contains('high') ? 'high' : 
+                          b.classList.contains('medium') ? 'medium' : 'low';
+        return priorityOrder[priorityA] - priorityOrder[priorityB];
+      });
+
+      const taskIds = tasks.map(card => card.dataset.taskId);
+
+      vscode.postMessage({
+        command: 'startBatchExecution',
+        taskIds: taskIds
+      });
+    }
+
+    function cancelBatchExecution() {
+      vscode.postMessage({
+        command: 'cancelBatchExecution'
+      });
+    }
+
+    function updateBatchUI(isRunning) {
+      isBatchRunning = isRunning;
+
+      const playAllBtn = document.querySelector('.play-all-btn');
+      const progressBanner = document.getElementById('batchProgressBanner');
+
+      if (playAllBtn) {
+        playAllBtn.classList.toggle('running', isRunning);
+        playAllBtn.innerHTML = isRunning ? '⏹ Stop All' : '${Icons.play(12)} Play All';
+        playAllBtn.title = isRunning ? 'Cancel batch execution' : 'Execute all tasks via Claude CLI';
+      }
+
+      if (progressBanner) {
+        progressBanner.style.display = isRunning ? 'flex' : 'none';
+      }
+    }
+
+    function updateBatchProgress(current, total, completed, skipped) {
+      batchProgress = { current, total, completed, skipped };
+
+      const currentEl = document.getElementById('batchProgressCurrent');
+      const totalEl = document.getElementById('batchProgressTotal');
+      const completedEl = document.getElementById('batchCompleted');
+      const skippedEl = document.getElementById('batchSkipped');
+
+      if (currentEl) currentEl.textContent = current;
+      if (totalEl) totalEl.textContent = total;
+      if (completedEl) completedEl.textContent = completed;
+      if (skippedEl) skippedEl.textContent = skipped;
+    }
+    // ============ End Batch Execution Functions ============
 
     // Open settings handler
     function openSettings() {
@@ -2330,9 +3692,131 @@ ${allColumns
           }
           break;
         }
+
+        case 'ralphCommandExecuted': {
+          hideAgentModal();
+          // Command executed successfully, modal already closed
+          break;
+        }
+
+        case 'ralphCommandError': {
+          const btn = document.getElementById('sendToAgentBtn');
+          btn.disabled = false;
+          btn.textContent = 'Execute with Ralph';
+          alert('Error: ' + (message.error || 'Failed to execute ralph command'));
+          break;
+        }
+
+        case 'claudeExecutionStarted': {
+          runningTasks.add(message.taskId);
+          updateTaskRunningState(message.taskId, true);
+          break;
+        }
+
+        case 'claudeExecutionStopped': {
+          runningTasks.delete(message.taskId);
+          updateTaskRunningState(message.taskId, false);
+          break;
+        }
+
+        case 'claudeExecutionError': {
+          runningTasks.delete(message.taskId);
+          updateTaskRunningState(message.taskId, false);
+          alert('Claude execution failed: ' + (message.error || 'Unknown error'));
+          break;
+        }
+
+        // Rate limit message handlers
+        case 'rateLimitCountdownStart': {
+          startRateLimitCountdown(message.taskId, message.waitSeconds);
+          break;
+        }
+
+        case 'rateLimitRetrying': {
+          clearRateLimitUI();
+          runningTasks.add(message.taskId);
+          updateTaskRunningState(message.taskId, true);
+          break;
+        }
+
+        // ============ Batch Execution Message Handlers ============
+        case 'batchExecutionStarted': {
+          updateBatchUI(true);
+          updateBatchProgress(0, message.total, 0, 0);
+          break;
+        }
+
+        case 'batchTaskStarted': {
+          // Highlight the current task being executed
+          const card = document.querySelector(\`[data-task-id="\${message.taskId}"]\`);
+          if (card) {
+            card.classList.add('running');
+          }
+          updateBatchProgress(message.index + 1, message.total, batchProgress.completed, batchProgress.skipped);
+          break;
+        }
+
+        case 'batchTaskCompleted': {
+          // Remove running state from task
+          const taskCard = document.querySelector(\`[data-task-id="\${message.taskId}"]\`);
+          if (taskCard) {
+            taskCard.classList.remove('running');
+          }
+
+          if (message.success) {
+            batchProgress.completed++;
+          } else {
+            batchProgress.skipped++;
+          }
+          updateBatchProgress(batchProgress.current, batchProgress.total, batchProgress.completed, batchProgress.skipped);
+          break;
+        }
+
+        case 'batchExecutionProgress': {
+          updateBatchProgress(message.current, message.total, message.completed, message.skipped);
+          break;
+        }
+
+        case 'batchExecutionComplete': {
+          updateBatchUI(false);
+          alert(\`Batch complete!\\n\\nCompleted: \${message.completed}\\nSkipped: \${message.skipped}\`);
+          refresh(); // Refresh to update task positions
+          break;
+        }
+
+        case 'batchExecutionCancelled': {
+          updateBatchUI(false);
+          alert(\`Batch cancelled.\\n\\nCompleted: \${message.completed}\\nRemaining: \${message.total - message.current}\`);
+          refresh();
+          break;
+        }
+        // ============ End Batch Execution Message Handlers ============
       }
     });
   </script>
+
+  <!-- Batch Progress Banner -->
+  <div class="batch-progress-banner" id="batchProgressBanner" style="display: none;">
+    <div class="batch-progress-content">
+      <span class="batch-progress-icon">${Icons.rotateCcw(16)}</span>
+      <span>Running: <span id="batchProgressCurrent">0</span>/<span id="batchProgressTotal">0</span></span>
+      <span class="batch-progress-stats">(Completed: <span id="batchCompleted">0</span>, Skipped: <span id="batchSkipped">0</span>)</span>
+    </div>
+    <button class="batch-cancel-btn" onclick="cancelBatchExecution()">Cancel</button>
+  </div>
+
+  <!-- Rate Limit Banner -->
+  <div class="rate-limit-banner" id="rateLimitBanner">
+    <div class="rate-limit-banner-content">
+      <span>${Icons.clock(20)}</span>
+      <span class="rate-limit-banner-timer" id="rateLimitTimer">00:00</span>
+      <span class="rate-limit-banner-task">Rate limit - waiting to retry: <span id="rateLimitTaskName"></span></span>
+    </div>
+    <div class="rate-limit-banner-actions">
+      <button class="retry-btn" onclick="retryRateLimitNow()">Retry Now</button>
+      <button class="cancel-btn" onclick="cancelRateLimitWait()">Cancel</button>
+    </div>
+  </div>
 </body>
 </html>`;
   }

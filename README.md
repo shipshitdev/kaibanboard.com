@@ -20,6 +20,7 @@ An AI-powered Kanban board for visualizing markdown tasks from `.agent/TASKS/` d
 - **Real-time Refresh**: Update board with latest tasks
 - **Theme Support**: Adapts to VS Code's theme (dark/light)
 - **AI-Enhanced**: Intelligent task organization and visualization
+- **Ralph Loop Integration**: Execute tasks with Claude's autonomous development loop (requires Claude Code and ralph-wiggum plugin)
 
 ## Supported Format
 
@@ -202,6 +203,62 @@ The Cursor Cloud Agent workflow allows you to send tasks to Cursor's AI agent, w
 - Make sure you have the necessary permissions
 - You can reject tasks in "Testing" status to send them back to "To Do" with feedback
 
+### Step 6: Using Ralph Loop for Task Execution
+
+**Important:** Ralph Loop requires **Claude Code** (not VS Code). The extension uses Claude Code by default for executing ralph-loop commands.
+
+#### What is Ralph Loop?
+
+Ralph Loop is a Claude Code plugin that enables autonomous, iterative development loops. When you execute a task with Ralph Loop, Claude will:
+1. Work on the task iteratively
+2. View previous outputs each iteration
+3. Continue refining until the task is complete
+4. Stop when completion goals are achieved
+
+#### Prerequisites
+
+1. **Install Claude Code**: Make sure you're using Claude Code (not VS Code) for this feature
+2. **Install Ralph Loop Plugin**: The Ralph Loop plugin must be installed in Claude Code
+   - In Claude Code, run: `/plugin install ralph-wiggum`
+   - Or install from the [official Anthropic plugins repository](https://github.com/anthropics/claude-plugins-official/tree/main/plugins/ralph-loop)
+
+#### Using Ralph Loop
+
+1. **Open the Kanban board** and click the ▶ (Play) button on any task card
+2. **Select "Execute with Ralph Loop"** in the execution method options
+3. **Click "Execute with Ralph"** - The ralph-loop command will be executed in your terminal
+4. **Monitor progress** in the terminal - Claude will work on the task iteratively
+
+#### Configuration
+
+You can configure Ralph Loop settings in VS Code/Cursor settings:
+
+- `kaiban.ralph.command`: The ralph command to execute (default: `/ralph-loop`)
+- `kaiban.ralph.maxIterations`: Maximum iterations for ralph-loop (default: 5)
+- `kaiban.ralph.completionPromise`: Completion promise template (optional)
+
+**Default Command Format:**
+```
+/ralph-loop "Task: [task-label]
+
+[task-description]
+
+PRD Context:
+[prd-content]" --max-iterations 5
+```
+
+The command includes:
+- Task label and description
+- PRD content (if available) for context
+- Maximum iterations limit
+- Optional completion promise
+
+**Note:**
+- Ralph Loop executes in your VS Code/Cursor terminal
+- The command uses Claude Code by default
+- Task information (label, description, PRD) is automatically included
+- You can see the full command output in the terminal panel
+
 ### Quick Tips
 
 - **Drag & Drop**: Move tasks between columns to update their status
@@ -319,10 +376,18 @@ PRD files in `.agent/PRDS/` can be any markdown format. The extension will rende
 
 ## Requirements
 
-- VS Code 1.80.0 or higher
+- VS Code 1.80.0 or higher (or Claude Code for Ralph Loop feature)
 - Workspace must contain `.agent/TASKS/` directories
 - Task files must follow the Kanban markdown format
 - PRD files should be in `.agent/PRDS/` (optional but recommended)
+
+### Optional Requirements
+
+- **Ralph Loop**: Requires Claude Code and the `ralph-wiggum` plugin installed
+  - Install plugin: `/plugin install ralph-wiggum` in Claude Code
+  - See [Step 6: Using Ralph Loop](#step-6-using-ralph-loop-for-task-execution) for details
+- **Cursor Cloud Agent**: Requires Cursor IDE (not VS Code) and Cursor API key
+  - See [Step 5: Setting Up Cursor Cloud Agent](#step-5-setting-up-cursor-cloud-agent-optional) for details
 
 ## Structure
 
