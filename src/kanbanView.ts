@@ -118,7 +118,13 @@ export class KanbanViewProvider {
             await this.updateTaskStatus(message.taskId, message.newStatus);
             break;
           case "updateTaskOrder":
-            await this.handleUpdateTaskOrder(message.taskId, message.order, message.newStatus);
+            await this.handleUpdateTaskOrder(
+              message.taskId,
+              message.order,
+              message.newStatus,
+              message.startExecution,
+              message.stopExecution
+            );
             break;
           case "getAvailableProviders":
             await this.handleGetAvailableProviders();
@@ -152,6 +158,9 @@ export class KanbanViewProvider {
             break;
           case "editPRD":
             await this.handleEditPRD(message.prdPath);
+            break;
+          case "updateTask":
+            await this.handleUpdateTask(message.taskId, message.updates);
             break;
           case "startBatchExecution":
             await this.handleStartBatchExecution(message.taskIds);
@@ -196,16 +205,27 @@ export class KanbanViewProvider {
 
   private async loadPRDContent(prdPath: string, taskFilePath?: string) {
     if (!this.panel) {
+      console.error("loadPRDContent: Panel not available");
       return;
     }
+
+    console.log("loadPRDContent called:", { prdPath, taskFilePath });
 
     try {
       // Get PRD base path from configuration
       const config = vscode.workspace.getConfiguration("kaiban.prd");
       const basePath = config.get<string>("basePath", ".agent/PRDS");
+      console.log("PRD base path:", basePath);
 
       const workspaceFolders = vscode.workspace.workspaceFolders;
       if (!workspaceFolders) {
+        console.error("loadPRDContent: No workspace folders");
+        this.panel.webview.postMessage({
+          command: "updatePRDContent",
+          content: `<p class="prd-not-found">No workspace folder open.</p>`,
+          prdExists: false,
+          prdPath: prdPath,
+        });
         return;
       }
 
@@ -249,10 +269,16 @@ export class KanbanViewProvider {
         try {
           const baseUri = vscode.Uri.joinPath(folder.uri, basePath);
           const prdUri = vscode.Uri.joinPath(baseUri, relativePrdPath);
+          console.log("Trying to load PRD from:", prdUri.fsPath);
           const document = await vscode.workspace.openTextDocument(prdUri);
           prdContent = document.getText();
-          if (prdContent) break;
-        } catch (_error) {}
+          if (prdContent) {
+            console.log("PRD loaded successfully from base path");
+            break;
+          }
+        } catch (error) {
+          console.log("Failed to load from base path:", error);
+        }
 
         // Strategy 2: Fallback - resolve relative to task file if available
         if (taskFilePath && !prdContent) {
@@ -260,26 +286,39 @@ export class KanbanViewProvider {
             const taskDir = path.dirname(taskFilePath);
             const resolvedPath = path.resolve(taskDir, prdPath);
             const prdUri = vscode.Uri.file(resolvedPath);
+            console.log("Trying to load PRD from task file relative path:", prdUri.fsPath);
             const document = await vscode.workspace.openTextDocument(prdUri);
             prdContent = document.getText();
-            if (prdContent) break;
-          } catch (_error) {}
+            if (prdContent) {
+              console.log("PRD loaded successfully from task file relative path");
+              break;
+            }
+          } catch (error) {
+            console.log("Failed to load from task file relative path:", error);
+          }
         }
 
         // Strategy 3: Fallback - resolve relative to workspace root
         if (!prdContent && !prdPath.startsWith("/") && !prdPath.startsWith("http")) {
           try {
             const prdUri = vscode.Uri.joinPath(folder.uri, prdPath);
+            console.log("Trying to load PRD from workspace root:", prdUri.fsPath);
             const document = await vscode.workspace.openTextDocument(prdUri);
             prdContent = document.getText();
-            if (prdContent) break;
-          } catch (_error) {}
+            if (prdContent) {
+              console.log("PRD loaded successfully from workspace root");
+              break;
+            }
+          } catch (error) {
+            console.log("Failed to load from workspace root:", error);
+          }
         }
       }
 
       if (prdContent) {
         // Simple markdown rendering (basic)
         const renderedContent = this.renderMarkdown(prdContent);
+        console.log("Sending PRD content to webview, length:", renderedContent.length);
         this.panel.webview.postMessage({
           command: "updatePRDContent",
           content: renderedContent,
@@ -287,17 +326,21 @@ export class KanbanViewProvider {
           prdPath: prdPath,
         });
       } else {
+        console.log("No PRD content found, sending not found message");
         this.panel.webview.postMessage({
           command: "updatePRDContent",
-          content: `<p class="prd-not-found">No PRD found for this task.</p>`,
+          content: `<p class="prd-not-found">No PRD found for this task. Path attempted: ${prdPath}</p>`,
           prdExists: false,
           prdPath: prdPath,
         });
       }
     } catch (error) {
+      console.error("Error in loadPRDContent:", error);
       this.panel.webview.postMessage({
         command: "updatePRDContent",
         content: `<p>Error loading PRD: ${error}</p>`,
+        prdExists: false,
+        prdPath: prdPath,
       });
     }
   }
@@ -476,7 +519,9 @@ Implementation details and considerations.
   private async handleUpdateTaskOrder(
     taskId: string,
     order: number,
-    newStatus?: string
+    newStatus?: string,
+    startExecution?: boolean,
+    stopExecution?: boolean
   ): Promise<void> {
     try {
       if (newStatus) {
@@ -486,9 +531,48 @@ Implementation details and considerations.
         // Only update order
         await this.taskParser.updateTaskOrder(taskId, order);
       }
+
+      // Handle execution start/stop based on status transition
+      if (stopExecution) {
+        // Stop terminal execution when moving out of Doing
+        await this.handleStopClaudeExecution(taskId);
+      } else if (startExecution) {
+        // Start execution when moving to Doing (only if not already running)
+        if (!this.claudeTerminals.has(taskId)) {
+          await this.handleExecuteViaClaude(taskId);
+        }
+      }
+
       await this.refresh();
     } catch (error) {
       vscode.window.showErrorMessage(`Failed to update task order: ${error}`);
+    }
+  }
+
+  private async handleUpdateTask(
+    taskId: string,
+    updates: {
+      label?: string;
+      description?: string;
+      priority?: string;
+      type?: string;
+      status?: string;
+    }
+  ): Promise<void> {
+    try {
+      await this.taskParser.updateTask(taskId, updates);
+      await this.refresh();
+      if (this.panel) {
+        this.panel.webview.postMessage({ command: "taskUpdated", taskId });
+      }
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to update task: ${error}`);
+      if (this.panel) {
+        this.panel.webview.postMessage({
+          command: "taskUpdateError",
+          error: String(error),
+        });
+      }
     }
   }
 
@@ -805,6 +889,14 @@ Implementation details and considerations.
 
   private async handleExecuteViaClaude(taskId: string) {
     try {
+      // Check if task is already running to prevent duplicate execution
+      if (this.claudeTerminals.has(taskId)) {
+        vscode.window.showWarningMessage(
+          `Task is already running. Stop it first before starting again.`
+        );
+        return;
+      }
+
       const tasks = await this.taskParser.parseTasks();
       const task = tasks.find((t) => t.id === taskId);
 
@@ -819,7 +911,7 @@ Implementation details and considerations.
       const useRalphLoop = config.get<boolean>("claude.useRalphLoop", false);
       const promptTemplate = config.get<string>(
         "claude.promptTemplate",
-        "Read the task file at {taskFile} and implement it. The task contains a link to the PRD with full requirements. Update the task status to Done when complete."
+        "Read the task file at {taskFile} and implement it. The task contains a link to the PRD with full requirements. Update the task status to Testing when complete."
       );
       const ralphCommand = config.get<string>("ralph.command", "/ralph-loop:ralph-loop");
       const maxIterations = config.get<number>("ralph.maxIterations", 5);
@@ -1058,6 +1150,22 @@ Implementation details and considerations.
 
   private async executeBatchTask(taskId: string) {
     try {
+      // Check if task is already running to prevent duplicate execution
+      if (this.claudeTerminals.has(taskId)) {
+        // Skip this task and move to next
+        this.batchSkippedCount++;
+        if (this.panel) {
+          this.panel.webview.postMessage({
+            command: "batchTaskCompleted",
+            taskId,
+            success: false,
+          });
+        }
+        this.currentBatchIndex++;
+        await this.executeNextBatchTask();
+        return;
+      }
+
       const tasks = await this.taskParser.parseTasks();
       const task = tasks.find((t) => t.id === taskId);
 
@@ -1072,7 +1180,7 @@ Implementation details and considerations.
       const useRalphLoop = config.get<boolean>("claude.useRalphLoop", true);
       const promptTemplate = config.get<string>(
         "claude.promptTemplate",
-        "Read the task file at {taskFile} and implement it. The task contains a link to the PRD with full requirements. Update the task status to Done when complete."
+        "Read the task file at {taskFile} and implement it. The task contains a link to the PRD with full requirements. Update the task status to Testing when complete."
       );
       const ralphCommand = config.get<string>("ralph.command", "/ralph-loop:ralph-loop");
       const maxIterations = config.get<number>("ralph.maxIterations", 5);
@@ -1419,7 +1527,7 @@ Implementation details and considerations.
              draggable="true"
              data-filepath="${task.filePath}"
              data-task-id="${task.id}"
-             data-prd-path="${task.prdPath}"
+             data-prd-path="${this.escapeHtml(task.prdPath || "")}"
              data-status="${task.status}"
              data-label="${this.escapeHtml(task.label)}"
              data-description="${this.escapeHtml(task.description || "")}"
@@ -1600,12 +1708,60 @@ ${allColumns
 
     <div class="prd-sidebar" id="prdPanel" style="display: none; visibility: hidden;">
       <div class="prd-header">
-        <span>PRD Preview</span>
+        <span id="prdHeaderTitle">PRD Preview</span>
         <div class="prd-actions">
+          <button class="edit-task-btn" id="editTaskBtn" onclick="toggleEditMode()" title="Edit Task" style="display: none;">${Icons.edit(14)}</button>
           <button class="edit-prd-btn" id="editPrdBtn" onclick="editPRD()" title="Edit PRD" style="display: none;">${Icons.edit(14)} Edit</button>
           <button class="create-prd-btn" id="createPrdBtn" onclick="createPRD()" title="Create PRD" style="display: none;">${Icons.plus(14)} Create PRD</button>
           <button class="play-prd-btn" id="playPrdBtn" onclick="executePRD()" title="Execute via Claude CLI" style="display: none;">▶ Execute</button>
           <button class="close-prd-btn" onclick="closePRD()" title="Close PRD Panel">×</button>
+        </div>
+      </div>
+      <!-- Task Edit Form (hidden by default) -->
+      <div class="task-edit-form" id="taskEditForm" style="display: none;">
+        <div class="edit-form-group">
+          <label for="editTaskLabel">Title</label>
+          <input type="text" id="editTaskLabel" class="edit-input" placeholder="Task title" />
+        </div>
+        <div class="edit-form-group">
+          <label for="editTaskDescription">Description</label>
+          <textarea id="editTaskDescription" class="edit-textarea" placeholder="Task description" rows="3"></textarea>
+        </div>
+        <div class="edit-form-row">
+          <div class="edit-form-group">
+            <label for="editTaskPriority">Priority</label>
+            <select id="editTaskPriority" class="edit-select">
+              <option value="High">High</option>
+              <option value="Medium">Medium</option>
+              <option value="Low">Low</option>
+            </select>
+          </div>
+          <div class="edit-form-group">
+            <label for="editTaskType">Type</label>
+            <select id="editTaskType" class="edit-select">
+              <option value="feature">Feature</option>
+              <option value="bug">Bug</option>
+              <option value="chore">Chore</option>
+              <option value="docs">Docs</option>
+              <option value="refactor">Refactor</option>
+              <option value="test">Test</option>
+            </select>
+          </div>
+        </div>
+        <div class="edit-form-group">
+          <label for="editTaskStatus">Status</label>
+          <select id="editTaskStatus" class="edit-select">
+            <option value="Backlog">Backlog</option>
+            <option value="To Do">To Do</option>
+            <option value="Doing">Doing</option>
+            <option value="Testing">Testing</option>
+            <option value="Done">Done</option>
+            <option value="Blocked">Blocked</option>
+          </select>
+        </div>
+        <div class="edit-form-actions">
+          <button class="edit-btn edit-btn-cancel" onclick="cancelEdit()">Cancel</button>
+          <button class="edit-btn edit-btn-save" onclick="saveTaskEdit()">Save</button>
         </div>
       </div>
       <div class="prd-content" id="prdContent">
@@ -1703,6 +1859,18 @@ ${allColumns
     </div>
   </div>
 
+  <!-- Stop Execution Confirmation Modal -->
+  <div class="modal-overlay" id="stopExecutionModal" style="display: none;">
+    <div class="modal">
+      <h3>Stop Task Execution?</h3>
+      <p>Moving "<span id="stopExecutionTaskName"></span>" out of the Doing column will stop the terminal execution and interrupt the task.</p>
+      <p style="font-size: 12px; color: var(--vscode-descriptionForeground); margin-top: 8px;">Are you sure you want to continue?</p>
+      <div class="modal-actions">
+        <button class="modal-btn modal-btn-cancel" id="stopExecutionCancel" onclick="cancelStopExecution()">Cancel</button>
+        <button class="modal-btn modal-btn-send" id="stopExecutionConfirm" onclick="confirmStopExecution()">Stop & Move</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Batch Progress Banner -->
   <div class="batch-progress-banner" id="batchProgressBanner" style="display: none;">

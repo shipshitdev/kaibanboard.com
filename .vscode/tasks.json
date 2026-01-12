@@ -1,29 +1,29 @@
 {
-  "version": "2.0.0",
   "tasks": [
     {
-      "type": "shell",
-      "label": "bun: compile",
       "command": "bun run compile",
       "group": "build",
+      "label": "bun: compile",
       "presentation": {
         "reveal": "silent"
       },
-      "problemMatcher": "$tsc"
+      "problemMatcher": "$tsc",
+      "type": "shell"
     },
     {
-      "type": "shell",
-      "label": "bun: watch",
       "command": "bun run watch",
-      "isBackground": true,
       "group": {
-        "kind": "build",
-        "isDefault": true
+        "isDefault": true,
+        "kind": "build"
       },
+      "isBackground": true,
+      "label": "bun: watch",
       "presentation": {
         "reveal": "silent"
       },
-      "problemMatcher": "$tsc-watch"
+      "problemMatcher": "$tsc-watch",
+      "type": "shell"
     }
-  ]
+  ],
+  "version": "2.0.0"
 }

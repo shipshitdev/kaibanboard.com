@@ -1,6 +1,6 @@
 const vscode = acquireVsCodeApi();
-const draggedElement = null;
-const isDragging = false;
+let draggedElement = null;
+let isDragging = false;
 const currentSortMode = "default"; // 'default', 'priority-asc', 'priority-desc'
 const originalTaskOrder = new Map(); // Store original order of tasks per column
 
@@ -84,6 +84,8 @@ function startRateLimitCountdown(taskId, waitSeconds) {
         clearInterval(rateLimitInterval);
         rateLimitInterval = null;
       }
+
+
 
       // Hide banner
       document.getElementById('rateLimitBanner').classList.remove('active');
@@ -198,6 +200,57 @@ function startRateLimitCountdown(taskId, waitSeconds) {
     function hideAgentModal() {
       document.getElementById('agentModal').style.display = 'none';
       currentAgentTaskId = null;
+    }
+
+    // Confirmation modal for stopping execution
+    let stopExecutionCallbacks = { onConfirm: null, onCancel: null };
+
+    function showStopExecutionModal(taskId, onConfirm, onCancel) {
+      const modal = document.getElementById('stopExecutionModal');
+      const taskCard = document.querySelector(`[data-task-id="${taskId}"]`);
+      const taskName = taskCard ? taskCard.dataset.label : 'this task';
+
+      // Set task name in modal
+      const taskNameElement = document.getElementById('stopExecutionTaskName');
+      if (taskNameElement) {
+        taskNameElement.textContent = taskName;
+      }
+
+      // Store callbacks
+      stopExecutionCallbacks.onConfirm = onConfirm;
+      stopExecutionCallbacks.onCancel = onCancel;
+
+      // Show modal
+      if (modal) {
+        modal.style.display = 'flex';
+      } else {
+        // Fallback if modal doesn't exist - just confirm
+        onConfirm();
+      }
+    }
+
+    function hideStopExecutionModal() {
+      const modal = document.getElementById('stopExecutionModal');
+      if (modal) {
+        modal.style.display = 'none';
+      }
+      // Clear callbacks
+      stopExecutionCallbacks.onConfirm = null;
+      stopExecutionCallbacks.onCancel = null;
+    }
+
+    function confirmStopExecution() {
+      if (stopExecutionCallbacks.onConfirm) {
+        hideStopExecutionModal();
+        stopExecutionCallbacks.onConfirm();
+      }
+    }
+
+    function cancelStopExecution() {
+      if (stopExecutionCallbacks.onCancel) {
+        hideStopExecutionModal();
+        stopExecutionCallbacks.onCancel();
+      }
     }
 
     function onProviderChange() {
@@ -323,12 +376,97 @@ function startRateLimitCountdown(taskId, waitSeconds) {
       vscode.postMessage({ command: 'configureProviders' });
     }
 
+    // Task edit state
+    let currentEditTaskId = null;
+    let isEditMode = false;
+
+    // Task edit functions
+    function toggleEditMode() {
+      const selectedCard = document.querySelector('.task-card.selected');
+      if (!selectedCard) return;
+
+      isEditMode = !isEditMode;
+      const editForm = document.getElementById('taskEditForm');
+      const prdContent = document.getElementById('prdContent');
+      const editBtn = document.getElementById('editTaskBtn');
+      const headerTitle = document.getElementById('prdHeaderTitle');
+
+      if (isEditMode) {
+        currentEditTaskId = selectedCard.dataset.taskId;
+
+        // Populate form with current values
+        document.getElementById('editTaskLabel').value = selectedCard.dataset.label || '';
+        document.getElementById('editTaskDescription').value = selectedCard.dataset.description || '';
+        document.getElementById('editTaskPriority').value = selectedCard.querySelector('.badge.priority-high') ? 'High' :
+          selectedCard.querySelector('.badge.priority-medium') ? 'Medium' : 'Low';
+
+        // Get type from badge
+        const typeBadge = selectedCard.querySelector('.badge.type');
+        document.getElementById('editTaskType').value = typeBadge ? typeBadge.textContent.toLowerCase() : 'feature';
+
+        document.getElementById('editTaskStatus').value = selectedCard.dataset.status || 'Backlog';
+
+        // Show edit form, hide PRD content
+        editForm.style.display = 'flex';
+        prdContent.style.display = 'none';
+        headerTitle.textContent = 'Edit Task';
+        editBtn.classList.add('active');
+      } else {
+        cancelEdit();
+      }
+    }
+
+    function cancelEdit() {
+      isEditMode = false;
+      currentEditTaskId = null;
+
+      const editForm = document.getElementById('taskEditForm');
+      const prdContent = document.getElementById('prdContent');
+      const editBtn = document.getElementById('editTaskBtn');
+      const headerTitle = document.getElementById('prdHeaderTitle');
+
+      editForm.style.display = 'none';
+      prdContent.style.display = 'block';
+      headerTitle.textContent = 'PRD Preview';
+      editBtn.classList.remove('active');
+    }
+
+    function saveTaskEdit() {
+      if (!currentEditTaskId) return;
+
+      const updates = {
+        label: document.getElementById('editTaskLabel').value.trim(),
+        description: document.getElementById('editTaskDescription').value.trim(),
+        priority: document.getElementById('editTaskPriority').value,
+        type: document.getElementById('editTaskType').value,
+        status: document.getElementById('editTaskStatus').value
+      };
+
+      vscode.postMessage({
+        command: 'updateTask',
+        taskId: currentEditTaskId,
+        updates: updates
+      });
+
+      cancelEdit();
+    }
+
     // Close agent modal on overlay click
     document.getElementById('agentModal').addEventListener('click', (e) => {
       if (e.target.id === 'agentModal') {
         hideAgentModal();
       }
     });
+
+    // Click handler for stop execution modal overlay
+    const stopExecutionModal = document.getElementById('stopExecutionModal');
+    if (stopExecutionModal) {
+      stopExecutionModal.addEventListener('click', (e) => {
+        if (e.target.id === 'stopExecutionModal') {
+          cancelStopExecution();
+        }
+      });
+    }
 
     // Click handler for task cards
     document.addEventListener('click', (e) => {
@@ -364,7 +502,17 @@ function startRateLimitCountdown(taskId, waitSeconds) {
 
       const card = e.target.closest('.task-card');
       if (card) {
-        const prdPath = card.dataset.prdPath;
+        // Get PRD path - handle both camelCase (dataset.prdPath) and kebab-case (getAttribute)
+        const prdPath = card.dataset.prdPath || card.getAttribute('data-prd-path') || '';
+
+        // Debug logging
+        console.log('Task clicked - PRD path:', prdPath);
+        console.log('Task card data:', {
+          prdPath: card.dataset.prdPath,
+          prdPathAttr: card.getAttribute('data-prd-path'),
+          filepath: card.dataset.filepath,
+          taskId: card.dataset.taskId
+        });
 
         // Remove selection from all cards
         document.querySelectorAll('.task-card').forEach(c => c.classList.remove('selected'));
@@ -377,24 +525,41 @@ function startRateLimitCountdown(taskId, waitSeconds) {
         const panel = document.getElementById('prdPanel');
         const prdContent = document.getElementById('prdContent');
 
-        if (prdPath) {
+        // Always show the panel first
+        if (board && panel) {
+          board.classList.add('with-prd-sidebar');
+          panel.style.display = 'flex';
+          panel.style.visibility = 'visible';
+          requestAnimationFrame(() => {
+            panel.setAttribute('data-visible', 'true');
+          });
+
+          // Update terminal panel positioning if visible
+          const terminalPanel = document.getElementById('terminalPanel');
+          if (terminalPanel && terminalPanel.getAttribute('data-visible') === 'true') {
+            terminalPanel.classList.add('with-sidebar');
+          }
+
+          // Show edit task button
+          const editTaskBtn = document.getElementById('editTaskBtn');
+          if (editTaskBtn) {
+            editTaskBtn.style.display = 'inline-block';
+          }
+
+          // Cancel any active edit mode when switching tasks
+          if (isEditMode) {
+            cancelEdit();
+          }
+        }
+
+        // If PRD path exists and is not empty, load it
+        if (prdPath && prdPath.trim() !== '') {
+          console.log('Loading PRD:', prdPath);
           showPRDPreview(prdPath);
         } else {
-          // If no PRD, show sidebar with placeholder
-          if (board && panel && prdContent) {
-            board.classList.add('with-prd-sidebar');
-            panel.style.display = 'flex';
-            panel.style.visibility = 'visible';
-            requestAnimationFrame(() => {
-              panel.setAttribute('data-visible', 'true');
-            });
+          // If no PRD, show placeholder
+          if (prdContent) {
             prdContent.innerHTML = '<div class="prd-placeholder">This task has no PRD linked</div>';
-
-            // Update terminal panel positioning if visible
-            const terminalPanel = document.getElementById('terminalPanel');
-            if (terminalPanel && terminalPanel.getAttribute('data-visible') === 'true') {
-              terminalPanel.classList.add('with-sidebar');
-            }
           }
         }
       }
@@ -458,20 +623,30 @@ function startRateLimitCountdown(taskId, waitSeconds) {
         const taskId = draggedElement.dataset.taskId;
         const currentStatus = draggedElement.dataset.status;
 
+        // Get the column-content container where task cards live
+        const columnContent = column.querySelector('.column-content');
+        if (!columnContent) return;
+
         // Calculate new order based on drop position
         // First, temporarily move the element to the correct position in DOM
         const dropTarget = e.target.closest('.task-card');
-        if (dropTarget && dropTarget !== draggedElement && dropTarget.parentElement === column) {
+        if (dropTarget && dropTarget !== draggedElement && dropTarget.parentElement === columnContent) {
           // Insert before the target
-          column.insertBefore(draggedElement, dropTarget);
+          columnContent.insertBefore(draggedElement, dropTarget);
         } else if (!dropTarget || dropTarget === draggedElement) {
           // Dropped at end or on empty space - append to end
-          column.appendChild(draggedElement);
+          columnContent.appendChild(draggedElement);
+        }
+
+        // Remove any empty state message since we now have a task
+        const emptyState = columnContent.querySelector('.empty-state');
+        if (emptyState) {
+          emptyState.remove();
         }
 
         // Now calculate order based on actual DOM position
         // Get all task cards in the column after DOM update
-        const allTasksInColumn = Array.from(column.querySelectorAll('.task-card'));
+        const allTasksInColumn = Array.from(columnContent.querySelectorAll('.task-card'));
         const droppedIndex = allTasksInColumn.indexOf(draggedElement);
 
         // Calculate order: if there are tasks before it, use their max order + 1
@@ -495,12 +670,46 @@ function startRateLimitCountdown(taskId, waitSeconds) {
 
         // Update order and status if changed
         if (newStatus !== currentStatus) {
-          vscode.postMessage({
-            command: 'updateTaskOrder',
-            taskId: taskId,
-            order: newOrder,
-            newStatus: newStatus
-          });
+          // Check for special status transitions
+          const isMovingToDoing = currentStatus === 'To Do' && newStatus === 'Doing';
+          const isMovingOutOfDoing = currentStatus === 'Doing' && newStatus !== 'Doing';
+
+          if (isMovingOutOfDoing) {
+            // Show confirmation modal before moving out of Doing
+            showStopExecutionModal(taskId, () => {
+              // User confirmed - proceed with status update and stop execution
+              draggedElement.dataset.status = newStatus;
+              vscode.postMessage({
+                command: 'updateTaskOrder',
+                taskId: taskId,
+                order: newOrder,
+                newStatus: newStatus,
+                stopExecution: true
+              });
+            }, () => {
+              // User cancelled - revert the drag
+              const originalColumn = document.querySelector(`[data-status="${currentStatus}"]`);
+              const originalColumnContent = originalColumn?.querySelector('.column-content');
+              if (originalColumnContent) {
+                originalColumnContent.appendChild(draggedElement);
+              }
+            });
+          } else {
+            // Update the data-status attribute on the card
+            draggedElement.dataset.status = newStatus;
+
+            // Check if moving to Doing - start execution (only if not already running)
+            // Prevent duplicate execution if task is already running
+            const shouldStartExecution = isMovingToDoing && !runningTasks.has(taskId);
+
+            vscode.postMessage({
+              command: 'updateTaskOrder',
+              taskId: taskId,
+              order: newOrder,
+              newStatus: newStatus,
+              startExecution: shouldStartExecution
+            });
+          }
         } else {
           // Same column, just reordering
           vscode.postMessage({
@@ -554,12 +763,29 @@ function startRateLimitCountdown(taskId, waitSeconds) {
         playBtn.style.display = currentPrdTaskId ? 'inline-block' : 'none';
       }
 
+      // Show edit task button when a task is selected
+      const editTaskBtn = document.getElementById('editTaskBtn');
+      if (editTaskBtn) {
+        editTaskBtn.style.display = currentPrdTaskId ? 'inline-block' : 'none';
+      }
+
+      // Cancel any active edit mode when switching tasks
+      if (isEditMode) {
+        cancelEdit();
+      }
+
       // Load PRD content with task file path for accurate resolution
+      console.log('Sending loadPRD message:', { prdPath, taskFilePath });
       vscode.postMessage({
         command: 'loadPRD',
         prdPath: prdPath,
         taskFilePath: taskFilePath
       });
+
+      // Show loading state
+      if (content) {
+        content.innerHTML = '<div class="prd-placeholder">Loading PRD...</div>';
+      }
     }
 
     // Close PRD preview
@@ -1134,6 +1360,12 @@ function startRateLimitCountdown(taskId, waitSeconds) {
       const message = event.data;
       switch (message.command) {
         case 'updatePRDContent': {
+          console.log('Received updatePRDContent:', {
+            prdExists: message.prdExists,
+            prdPath: message.prdPath,
+            hasContent: !!message.content
+          });
+
           const panel = document.getElementById('prdPanel');
           const board = document.getElementById('kanbanBoard');
           const content = document.getElementById('prdContent');

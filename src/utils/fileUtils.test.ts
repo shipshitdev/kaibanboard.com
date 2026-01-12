@@ -70,10 +70,24 @@ describe("fileUtils", () => {
     expect(getPRDBasePath(workspaceFolder)).toBe(path.join("/workspace", "custom/PRDS"));
   });
 
-  it("getTasksBasePath resolves .agent/TASKS", () => {
+  it("getTasksBasePath resolves default .agent/TASKS", () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({
+      get: vi.fn().mockReturnValue(".agent/TASKS"),
+    } as unknown as vscode.WorkspaceConfiguration);
+
     const workspaceFolder = { uri: { fsPath: "/workspace" } } as vscode.WorkspaceFolder;
 
-    expect(getTasksBasePath(workspaceFolder)).toBe(path.join("/workspace", ".agent", "TASKS"));
+    expect(getTasksBasePath(workspaceFolder)).toBe(path.join("/workspace", ".agent/TASKS"));
+  });
+
+  it("getTasksBasePath resolves configured base path", () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({
+      get: vi.fn().mockReturnValue("custom/TASKS"),
+    } as unknown as vscode.WorkspaceConfiguration);
+
+    const workspaceFolder = { uri: { fsPath: "/workspace" } } as vscode.WorkspaceFolder;
+
+    expect(getTasksBasePath(workspaceFolder)).toBe(path.join("/workspace", "custom/TASKS"));
   });
 
   it("generateUniqueFileName appends a counter when needed", () => {

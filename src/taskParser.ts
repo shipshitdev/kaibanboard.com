@@ -358,6 +358,60 @@ ${orderLine}**Created:** ${task.created}
   }
 
   /**
+   * Update task fields by ID
+   */
+  public async updateTask(
+    taskId: string,
+    updates: {
+      label?: string;
+      description?: string;
+      priority?: string;
+      type?: string;
+      status?: string;
+    }
+  ): Promise<void> {
+    const tasks = await this.parseTasks();
+    const task = tasks.find((t) => t.id === taskId);
+
+    if (!task) {
+      throw new Error(`Task with ID ${taskId} not found`);
+    }
+
+    const content = fs.readFileSync(task.filePath, "utf-8");
+    const lines = content.split("\n");
+    const now = new Date().toISOString();
+
+    const updatedLines = lines.map((line, index) => {
+      if (index === 0 && updates.label !== undefined) {
+        return `## Task: ${updates.label}`;
+      } else if (line.startsWith("**Label:**") && updates.label !== undefined) {
+        return `**Label:** ${updates.label}`;
+      } else if (line.startsWith("**Description:**") && updates.description !== undefined) {
+        return `**Description:** ${updates.description}`;
+      } else if (line.startsWith("**Type:**") && updates.type !== undefined) {
+        return `**Type:** ${updates.type}`;
+      } else if (line.startsWith("**Status:**") && updates.status !== undefined) {
+        return `**Status:** ${updates.status}`;
+      } else if (line.startsWith("**Priority:**") && updates.priority !== undefined) {
+        return `**Priority:** ${updates.priority}`;
+      } else if (line.startsWith("**Updated:**")) {
+        return `**Updated:** ${now}`;
+      }
+      return line;
+    });
+
+    fs.writeFileSync(task.filePath, updatedLines.join("\n"), "utf-8");
+
+    if (updates.status && task.prdPath) {
+      await this.updatePRDStatus(
+        task.filePath,
+        task.prdPath,
+        updates.status as "Backlog" | "To Do" | "Doing" | "Testing" | "Done" | "Blocked"
+      );
+    }
+  }
+
+  /**
    * Update task PRD path by ID
    */
   public async updateTaskPRD(taskId: string, prdPath: string): Promise<void> {

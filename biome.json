@@ -1,22 +1,25 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.3.11/schema.json",
-  "assist": { "actions": { "source": { "organizeImports": "on" } } },
-  "linter": {
-    "enabled": true,
-    "rules": {
-      "recommended": true,
-      "correctness": {
-        "noUnusedImports": "error",
-        "noUnusedVariables": "error"
-      },
-      "style": {
-        "useConst": "error",
-        "noNonNullAssertion": "warn"
-      },
-      "suspicious": {
-        "noExplicitAny": "warn"
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": "on"
       }
     }
+  },
+  "files": {
+    "includes": [
+      "**",
+      "!**/coverage",
+      "!**/node_modules",
+      "!**/.next",
+      "!**/dist",
+      "!**/out",
+      "!**/build",
+      "!**/*.vsix",
+      "!**/.husky"
+    ],
+    "maxSize": 1048576
   },
   "formatter": {
     "enabled": true,
@@ -31,17 +34,21 @@
       "trailingCommas": "es5"
     }
   },
-  "files": {
-    "includes": [
-      "**",
-      "!**/coverage",
-      "!**/node_modules",
-      "!**/.next",
-      "!**/dist",
-      "!**/out",
-      "!**/build",
-      "!**/*.vsix",
-      "!**/.husky"
-    ]
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "correctness": {
+        "noUnusedImports": "error",
+        "noUnusedVariables": "error"
+      },
+      "recommended": true,
+      "style": {
+        "noNonNullAssertion": "warn",
+        "useConst": "error"
+      },
+      "suspicious": {
+        "noExplicitAny": "warn"
+      }
+    }
   }
 }

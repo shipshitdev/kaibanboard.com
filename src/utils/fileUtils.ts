@@ -45,10 +45,12 @@ export function getPRDBasePath(workspaceFolder: vscode.WorkspaceFolder): string 
 }
 
 /**
- * Get the TASKS base path
+ * Get the TASKS base path from configuration
  */
 export function getTasksBasePath(workspaceFolder: vscode.WorkspaceFolder): string {
-  return path.join(workspaceFolder.uri.fsPath, ".agent", "TASKS");
+  const config = vscode.workspace.getConfiguration("kaiban.task");
+  const basePath = config.get<string>("basePath", ".agent/TASKS");
+  return path.join(workspaceFolder.uri.fsPath, basePath);
 }
 
 /**

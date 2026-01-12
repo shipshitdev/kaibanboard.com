@@ -495,7 +495,12 @@ describe("KanbanViewProvider", () => {
 
         await messageHandler({ command: "loadPRD", prdPath: "./prd/test.md" });
 
-        expect(mockWebview.postMessage).not.toHaveBeenCalled();
+        expect(mockWebview.postMessage).toHaveBeenCalledWith({
+          command: "updatePRDContent",
+          content: '<p class="prd-not-found">No workspace folder open.</p>',
+          prdExists: false,
+          prdPath: "./prd/test.md",
+        });
       });
 
       it("should try multiple workspace folders to find PRD", async () => {

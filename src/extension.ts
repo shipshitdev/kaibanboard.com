@@ -463,6 +463,7 @@ export function activate(context: vscode.ExtensionContext) {
       const allValidColumns = ["Backlog", "To Do", "Doing", "Testing", "Done", "Blocked"];
       const columnsConfig = vscode.workspace.getConfiguration("kaiban.columns");
       const prdConfig = vscode.workspace.getConfiguration("kaiban.prd");
+      const taskConfig = vscode.workspace.getConfiguration("kaiban.task");
 
       // Show quick pick for configuration options
       const configOption = await vscode.window.showQuickPick(
@@ -481,6 +482,11 @@ export function activate(context: vscode.ExtensionContext) {
             label: "Configure PRD Base Path",
             description: "Set the base path for PRD files",
             option: "prd",
+          },
+          {
+            label: "Configure Task Base Path",
+            description: "Set the base path for task files",
+            option: "task",
           },
         ],
         {
@@ -554,6 +560,35 @@ export function activate(context: vscode.ExtensionContext) {
           await prdConfig.update("basePath", cleanPath, vscode.ConfigurationTarget.Workspace);
           vscode.window.showInformationMessage(
             `PRD base path updated to: ${cleanPath}. Refresh the board to apply changes.`
+          );
+        }
+      } else if (configOption.option === "task") {
+        // Configure Task path
+        const currentPath = taskConfig.get<string>("basePath", ".agent/TASKS");
+
+        const newPath = await vscode.window.showInputBox({
+          prompt: "Enter the base path for task files (relative to workspace root)",
+          value: currentPath,
+          placeHolder: ".agent/TASKS",
+          validateInput: (value) => {
+            if (!value || value.trim().length === 0) {
+              return "Path cannot be empty";
+            }
+            // Remove leading/trailing slashes
+            const cleanPath = value.trim().replace(/^\/+|\/+$/g, "");
+            if (cleanPath.length === 0) {
+              return "Invalid path";
+            }
+            return null;
+          },
+        });
+
+        if (newPath !== undefined) {
+          // Clean up the path (remove leading/trailing slashes)
+          const cleanPath = newPath.trim().replace(/^\/+|\/+$/g, "");
+          await taskConfig.update("basePath", cleanPath, vscode.ConfigurationTarget.Workspace);
+          vscode.window.showInformationMessage(
+            `Task base path updated to: ${cleanPath}. Refresh the board to apply changes.`
           );
         }
       }

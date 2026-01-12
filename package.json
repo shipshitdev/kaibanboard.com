@@ -125,6 +125,11 @@
           "description": "Base path for PRD (Product Requirements Document) files. PRD paths in task files will be resolved relative to this path.",
           "type": "string"
         },
+        "kaiban.task.basePath": {
+          "default": ".agent/TASKS",
+          "description": "Base path for task files. Tasks will be created in and scanned from this directory.",
+          "type": "string"
+        },
         "kaiban.ralph.command": {
           "default": "/ralph-loop:ralph-loop",
           "description": "Ralph command to execute. Can be a Claude Code plugin command (e.g., /ralph-loop:ralph-loop) or a bash script path (e.g., bash /path/to/ralph-loop.sh)",
@@ -176,13 +181,14 @@
     "@biomejs/biome": "2.3.11",
     "@types/node": "25.0.6",
     "@types/vscode": "1.105.0",
-    "@vitest/coverage-v8": "4.0.16",
-    "@vitest/ui": "4.0.16",
+    "@vitest/coverage-v8": "4.0.17",
+    "@vitest/ui": "4.0.17",
     "@vscode/vsce": "3.7.1",
     "husky": "9.1.7",
     "lint-staged": "16.2.7",
+    "playwright": "1.57.0",
     "typescript": "5.9.3",
-    "vitest": "4.0.16"
+    "vitest": "4.0.17"
   },
   "displayName": "Kaiban Board",
   "engines": {
@@ -223,6 +229,7 @@
     "pre:install": "bun update --latest --recursive && bun add -D @types/vscode@1.105.0",
     "prepare": "husky",
     "pretest": "bun run compile",
+    "screenshot": "bun run scripts/generate-screenshot.ts",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:ui": "vitest --ui",

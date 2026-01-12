@@ -1,89 +1,96 @@
-# Kaiban Board - VS Code Extension
+<p align="center">
+  <img src="assets/icon.png" alt="Kaiban Board Logo" width="128" height="128">
+</p>
 
-![Project Type](https://img.shields.io/badge/Project-App-blue)
-![Status](https://img.shields.io/badge/status-development-orange)
-![Version](https://img.shields.io/badge/version-pre--release-red)
-![Production](https://img.shields.io/badge/production-not%20ready-red)
-![License](https://img.shields.io/github/license/shipshitdev/kaibanboard.com)
+<h1 align="center">Kaiban Board</h1>
 
-An AI-powered Kanban board for visualizing markdown tasks from `.agent/TASKS/` directories with PRD preview support.
+<p align="center">
+  <strong>AI-powered Kanban board for markdown tasks</strong>
+</p>
 
-## Features
+<p align="center">
+  <a href="https://marketplace.visualstudio.com/items?itemName=shipshitdev.kaibanboardcom">
+    <img src="https://img.shields.io/visual-studio-marketplace/v/shipshitdev.kaibanboardcom?style=flat-square&logo=visualstudiocode&logoColor=white&label=VS%20Code" alt="VS Code Marketplace">
+  </a>
+  <a href="https://marketplace.visualstudio.com/items?itemName=shipshitdev.kaibanboardcom">
+    <img src="https://img.shields.io/visual-studio-marketplace/d/shipshitdev.kaibanboardcom?style=flat-square&logo=visualstudiocode&logoColor=white" alt="Downloads">
+  </a>
+  <a href="https://marketplace.visualstudio.com/items?itemName=shipshitdev.kaibanboardcom">
+    <img src="https://img.shields.io/visual-studio-marketplace/r/shipshitdev.kaibanboardcom?style=flat-square&logo=visualstudiocode&logoColor=white" alt="Rating">
+  </a>
+  <img src="https://img.shields.io/badge/status-production%20ready-brightgreen?style=flat-square" alt="Production Ready">
+  <a href="https://github.com/shipshitdev/kaibanboard.com/blob/master/LICENSE">
+    <img src="https://img.shields.io/github/license/shipshitdev/kaibanboard.com?style=flat-square" alt="License">
+  </a>
+</p>
 
-- **3-Column Board**: To Do, Testing, Done
-- **PRD Preview**: View Product Requirements Documents inline
-- **Multi-Workspace Support**: Aggregates tasks from all workspace folders
-- **Smart Parsing**: Reads Kanban markdown format with metadata
-- **Task Ordering**: Drag & drop to reorder tasks within columns - order is persisted to task files
-- **Smart Sorting**: Tasks sorted by custom order first, then by priority (High → Medium → Low)
-- **Click to Preview**: Click any card to preview PRD (no file opening)
-- **Double-click to Open**: Double-click to open the task file for editing
-- **Priority Badges**: Visual indicators for High/Medium/Low priority
-- **Real-time Refresh**: Update board with latest tasks
-- **Theme Support**: Adapts to VS Code's theme (dark/light)
-- **AI-Enhanced**: Intelligent task organization and visualization
-- **Ralph Loop Integration**: Execute tasks with Claude's autonomous development loop (requires Claude Code and ralph-wiggum plugin)
-
-## Supported Format
-
-The extension reads task files in this format:
-
-```markdown
-## Task: Title
-
-**ID:** task-id
-**Label:** Title
-**Description:** Brief description of the task
-**Type:** Feature
-**Status:** Backlog
-**Priority:** High
-**Order:** 1
-**Created:** 2025-10-19
-**Updated:** 2025-10-19
-**PRD:** [Link](../PRDS/file.md)
+<p align="center">
+  <a href="#features">Features</a> •
+  <a href="#installation">Installation</a> •
+  <a href="#getting-started">Getting Started</a> •
+  <a href="#usage">Usage</a> •
+  <a href="#development">Development</a> •
+  <a href="CHANGELOG.md">Changelog</a>
+</p>
 
 ---
 
-## Additional Notes
-```
+<p align="center">
+  <img src="assets/screenshot.png" alt="Kaiban Board Screenshot" width="100%">
+</p>
+
+---
+
+## Why Kaiban Board?
+
+**Kaiban Board** transforms your markdown task files into a visual kanban board directly inside VS Code/Cursor. No more context switching between your editor and external project management tools.
+
+- **Works with AI agents** - Compatible with Claude, Cursor, and other AI coding assistants
+- **Markdown-based** - Tasks are simple `.md` files you own and version control
+- **Zero lock-in** - Your tasks are just files in your repo, not locked in a database
+
+## Features
+
+| Feature | Description |
+|---------|-------------|
+| **4-Column Board** | To Do, Doing, Testing, Done - fully customizable |
+| **PRD Preview** | View Product Requirements Documents inline |
+| **Multi-Workspace** | Aggregates tasks from all workspace folders |
+| **Drag & Drop** | Reorder tasks within columns, order persists to files |
+| **Priority Sorting** | Smart sorting by custom order, then by priority |
+| **AI Execution** | Execute tasks with Cursor Cloud Agent or Ralph Loop |
+| **Theme Support** | Adapts to VS Code's dark/light theme |
+| **Real-time Refresh** | Board updates when task files change |
 
 ## Installation
 
-### Option 1: Development Mode
+### From VS Code Marketplace
 
-1. Clone the repository to your workspace
-2. Open the folder in VS Code
-3. Run `bun install`
-4. Press `F5` to launch Extension Development Host
-5. In the new window, run command: `Kaiban: Show Markdown Board`
+1. Open VS Code/Cursor
+2. Go to Extensions (`Cmd+Shift+X` / `Ctrl+Shift+X`)
+3. Search for "Kaiban Board"
+4. Click Install
 
-### Option 2: Package and Install
+### From VSIX File
 
 ```bash
 cd kaibanboard.com
 bun install
-bunx @vscode/vsce package
-code --install-extension shipshitdev.kaibanboardcom-0.2.0.vsix
+bun run package
+code --install-extension build/shipshitdev.kaibanboardcom-*.vsix
 ```
 
 ## Getting Started
 
-### Step 1: Create the Folder Structure
-
-In your workspace root, create the `.agent` folder structure:
+### 1. Create the Folder Structure
 
 ```bash
-mkdir -p .agent/TASKS
-mkdir -p .agent/PRDS
+mkdir -p .agent/TASKS .agent/PRDS
 ```
 
-Or manually create:
-- `.agent/TASKS/` - for your task files
-- `.agent/PRDS/` - for your Product Requirements Documents (optional but recommended)
+### 2. Create Your First Task
 
-### Step 2: Create Your First Task
-
-Create a new file in `.agent/TASKS/` (e.g., `my-first-task.md`) with this template:
+Create `.agent/TASKS/my-first-task.md`:
 
 ```markdown
 ## Task: My First Task
@@ -92,9 +99,8 @@ Create a new file in `.agent/TASKS/` (e.g., `my-first-task.md`) with this templa
 **Label:** My First Task
 **Description:** This is my first task in Kaiban Board
 **Type:** Feature
-**Status:** Backlog
+**Status:** To Do
 **Priority:** Medium
-**Order:** 1
 **Created:** 2025-01-15
 **Updated:** 2025-01-15
 **PRD:** [Link](../PRDS/my-first-task-prd.md)
@@ -103,398 +109,127 @@ Create a new file in `.agent/TASKS/` (e.g., `my-first-task.md`) with this templa
 
 ## Additional Notes
 
-Add any additional details, acceptance criteria, or notes here.
+Add any additional details here.
 ```
 
-**Required Fields:**
-- `ID`: Unique identifier (e.g., `task-001`, `feature-auth`)
-- `Label`: Task title
-- `Type`: One of `Feature`, `Bug`, `Enhancement`, or `Research`
-- `Status`: One of `Backlog`, `To Do`, `Testing`, or `Done`
-- `Priority`: One of `High`, `Medium`, or `Low`
-- `Created` & `Updated`: Dates in `YYYY-MM-DD` format
-
-**Optional Fields:**
-- `Description`: Brief task description
-- `PRD`: Link to PRD file (relative path from task file)
-- `Order`: Numeric value for custom task ordering within each column (automatically set when dragging tasks)
-
-### Step 3: Create Your First PRD (Optional)
-
-Create a PRD file in `.agent/PRDS/` (e.g., `my-first-task-prd.md`):
-
-```markdown
-# My First Task - Product Requirements Document
-
-## Overview
-Brief overview of what this feature/task accomplishes.
-
-## Goals
-- Goal 1
-- Goal 2
-
-## Requirements
-1. Requirement 1
-2. Requirement 2
-
-## Acceptance Criteria
-- [ ] Criterion 1
-- [ ] Criterion 2
-
-## Technical Notes
-Any technical implementation details...
-```
-
-The PRD can be any markdown format - the extension will render it when you click on a task card.
-
-### Step 4: View Your Board
+### 3. Open the Board
 
 1. Open Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`)
 2. Run: `Kaiban: Show Markdown Board`
-3. Your task should appear in the To Do column!
 
-### Step 5: Setting Up Cursor Cloud Agent (Optional)
+### Task File Reference
 
-**Important:** Cursor Cloud Agent requires **Cursor IDE** (not VS Code). Make sure you're using Cursor, not VS Code, for this feature to work.
-
-#### Workflow Overview
-
-The Cursor Cloud Agent workflow allows you to send tasks to Cursor's AI agent, which will:
-1. Create a new branch in your repository
-2. Implement the task according to the PRD
-3. Create a Pull Request with the changes
-4. You can review, request changes, or merge the PR
-
-#### Setup Instructions
-
-1. **Get Your Cursor API Key:**
-   - Visit [Cursor API Keys](https://cursor.com/settings/api-keys)
-   - Sign in to your Cursor account (you must be in Cursor IDE, not VS Code)
-   - Create a new API key or copy an existing one
-
-2. **Set Your API Key (Choose one method):**
-   
-   **Method A: Via Settings Button**
-   - Open the Kanban board
-   - Click the ⚙️ (Settings) button in the top right
-   - Select "Configure AI Providers"
-   - Choose "Cursor Cloud" from the list
-   - Paste your API key when prompted
-   
-   **Method B: Via Command Palette**
-   - Open Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`)
-   - Run: `Kaiban: Set API Key`
-   - Select "Cursor Cloud" from the provider list
-   - Paste your API key when prompted
-
-3. **Configure Repository URL (Auto-detected):**
-   - The extension automatically detects your git repository URL from your workspace
-   - If auto-detection fails, you can manually set it:
-     - Open Settings (`Cmd+,` / `Ctrl+Shift+P`)
-     - Search for `kaiban.cursor.repositoryUrl`
-     - Enter your GitHub repository URL (e.g., `https://github.com/username/repo`)
-
-4. **Use Cursor Cloud Agent:**
-   - Open the Kanban board
-   - The ▶ (Play) button will appear on task cards once an API key is configured
-   - Click the ▶ button on any task in "To Do", "Doing", or "Testing" status
-   - Select "Cursor Cloud Agent" as the provider
-   - The agent will create a branch, implement the task, and open a Pull Request
-   - You'll receive a notification when the agent completes with a link to the PR
-
-**Note:** 
-- The ▶ button only appears if at least one API key is configured
-- Cursor Cloud Agent creates branches and Pull Requests in your repository
-- Make sure you have the necessary permissions
-- You can reject tasks in "Testing" status to send them back to "To Do" with feedback
-
-### Step 6: Using Ralph Loop for Task Execution
-
-**Important:** Ralph Loop requires **Claude Code** (not VS Code). The extension uses Claude Code by default for executing ralph-loop commands.
-
-#### What is Ralph Loop?
-
-Ralph Loop is a Claude Code plugin that enables autonomous, iterative development loops. When you execute a task with Ralph Loop, Claude will:
-1. Work on the task iteratively
-2. View previous outputs each iteration
-3. Continue refining until the task is complete
-4. Stop when completion goals are achieved
-
-#### Prerequisites
-
-1. **Install Claude Code**: Make sure you're using Claude Code (not VS Code) for this feature
-2. **Install Ralph Loop Plugin**: The Ralph Loop plugin must be installed in Claude Code
-   - In Claude Code, run: `/plugin install ralph-wiggum`
-   - Or install from the [official Anthropic plugins repository](https://github.com/anthropics/claude-plugins-official/tree/main/plugins/ralph-loop)
-
-#### Using Ralph Loop
-
-1. **Open the Kanban board** and click the ▶ (Play) button on any task card
-2. **Select "Execute with Ralph Loop"** in the execution method options
-3. **Click "Execute with Ralph"** - The ralph-loop command will be executed in your terminal
-4. **Monitor progress** in the terminal - Claude will work on the task iteratively
-
-#### Configuration
-
-You can configure Ralph Loop settings in VS Code/Cursor settings:
-
-- `kaiban.ralph.command`: The ralph command to execute (default: `/ralph-loop`)
-- `kaiban.ralph.maxIterations`: Maximum iterations for ralph-loop (default: 5)
-- `kaiban.ralph.completionPromise`: Completion promise template (optional)
-
-**Default Command Format:**
-```
-/ralph-loop "Task: [task-label]
-
-[task-description]
-
-PRD Context:
-[prd-content]" --max-iterations 5
-```
-
-The command includes:
-- Task label and description
-- PRD content (if available) for context
-- Maximum iterations limit
-- Optional completion promise
-
-**Note:**
-- Ralph Loop executes in your VS Code/Cursor terminal
-- The command uses Claude Code by default
-- Task information (label, description, PRD) is automatically included
-- You can see the full command output in the terminal panel
-
-### Quick Tips
-
-- **Drag & Drop**: Move tasks between columns to update their status, or within the same column to reorder them
-- **Task Ordering**: Tasks are automatically ordered within each column - drag tasks to set custom order (stored as `Order` field)
-- **Sorting**: Tasks without an order field are sorted by priority (High → Medium → Low)
-- **Click Card**: Preview the PRD (if linked)
-- **Double-click Card**: Open the task file for editing
-- **Refresh**: Click the Refresh button to reload tasks
+| Field | Required | Values |
+|-------|----------|--------|
+| **ID** | Yes | Unique identifier (e.g., `task-001`) |
+| **Label** | Yes | Task title |
+| **Type** | Yes | `Feature`, `Bug`, `Enhancement`, `Research` |
+| **Status** | Yes | `Backlog`, `To Do`, `Doing`, `Testing`, `Done`, `Blocked` |
+| **Priority** | Yes | `High`, `Medium`, `Low` |
+| **Created** | Yes | Date in `YYYY-MM-DD` format |
+| **Updated** | Yes | Date in `YYYY-MM-DD` format |
+| **Description** | No | Brief task description |
+| **PRD** | No | Link to PRD file |
+| **Order** | No | Numeric value for custom ordering |
 
 ## Usage
 
-### Open Board
+### Board Interactions
 
-- Command Palette: `Kaiban: Show Markdown Board`
-- Or use the notification button when extension activates
+| Action | Result |
+|--------|--------|
+| **Click card** | Preview PRD in sidebar |
+| **Double-click card** | Open task file for editing |
+| **Drag card** | Move between columns or reorder |
+| **Click ▶ button** | Execute task with AI agent |
+| **Click ⟳ button** | Refresh board |
 
-### Refresh Board
+### Task Execution
 
-- Click the Refresh button in the board
-- Or use command: `Kaiban: Refresh Board`
+#### Cursor Cloud Agent
 
-### Open Task File
+Requires Cursor IDE and API key:
 
-- Click any task card to preview PRD
-- Double-click any task card to open the task file for editing
+1. Get API key from [Cursor Settings](https://cursor.com/settings/api-keys)
+2. Run `Kaiban: Set API Key` and select "Cursor Cloud"
+3. Click ▶ on any task to execute
 
-### Task Ordering
+The agent will create a branch, implement the task, and open a PR.
 
-Kaiban Board supports custom task ordering within each column. This feature allows you to prioritize tasks visually and persist that order.
+#### Ralph Loop (Claude Code)
 
-#### How It Works
+Requires Claude Code with ralph-wiggum plugin:
 
-1. **Drag & Drop**: Simply drag any task card to a new position within the same column
-2. **Order Persistence**: The new order is automatically saved to the task file as an `Order` field
-3. **Automatic Sorting**: Tasks are displayed in this order:
-   - First: Tasks with an `Order` field (sorted ascending: 1, 2, 3...)
-   - Then: Tasks without an `Order` field (sorted by priority: High → Medium → Low)
-   - Within same order: Falls back to priority sorting
+1. Install plugin: `/plugin install ralph-wiggum` in Claude Code
+2. Click ▶ on any task
+3. Select "Execute with Ralph Loop"
 
-#### Order Field Format
+Claude will work iteratively until the task is complete.
 
-When you drag a task, the extension automatically adds or updates an `Order` field in the task file:
-
-```markdown
-**Order:** 1
-```
-
-The order field is inserted after the `Priority` field in the task metadata. Each column maintains its own independent ordering.
-
-#### Example
-
-If you have three tasks in the "To Do" column:
-- Task A (High priority, no order)
-- Task B (Medium priority, Order: 1)
-- Task C (Low priority, Order: 2)
-
-The display order will be:
-1. Task B (has order 1)
-2. Task C (has order 2)
-3. Task A (no order, sorted by priority: High comes last after ordered tasks)
-
-**Note**: Tasks with order values always appear before tasks without order values, regardless of priority.
-
-### Create PRD or Task from Cursor Chat
-
-You can trigger PRD and Task creation directly from Cursor's chat interface:
-
-#### Using Command Syntax
-
-In Cursor chat, type:
-- `@kaiban.createPRD` to create a new PRD
-- `@kaiban.createTask` to create a new Task
-
-**Example:**
-```
-@kaiban.createPRD
-```
-
-After running the command, you'll be prompted for:
-1. PRD/Task title (required)
-2. Description (optional)
-3. Additional fields (for tasks: type, priority, status)
-4. Whether to use AI generation (if AI providers are configured)
-
-#### Using Command Palette
-
-You can also use the Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`):
-- `Kaiban: Create PRD` - Create a new PRD file with AI assistance
-- `Kaiban: Create Task` - Create a new Task file with AI assistance
-
-#### AI-Assisted Generation
-
-When creating a PRD or Task, if you have AI providers configured (OpenAI, OpenRouter, etc.), you'll be asked if you want to use AI to generate the content:
-- **Yes**: AI will generate comprehensive content based on your title and description
-- **No**: Creates a template file that you can fill in manually
-
-**Note**: AI generation requires at least one configured AI provider. See [Step 5: Setting Up Cursor Cloud Agent](#step-5-setting-up-cursor-cloud-agent-optional) for setup instructions.
-
-## .agent/TASKS|PRDS Architecture
-
-This extension is designed to work with the **classic .agent/TASKS|PRDS architecture** that many AI agents and development workflows use:
-
-### Directory Structure
+## Project Structure
 
 ```
 your-project/
 ├── .agent/
 │   ├── TASKS/
 │   │   ├── feature-1.md
-│   │   ├── feature-2.md
 │   │   └── bug-fix-1.md
 │   └── PRDS/
 │       ├── feature-1-prd.md
-│       ├── feature-2-prd.md
 │       └── bug-fix-1-prd.md
 └── src/
     └── ...
 ```
 
-### Why This Architecture?
-
-- **AI Agent Compatible**: Most AI agents expect this structure
-- **Universal Standard**: Works across different tools and workflows
-- **Separation of Concerns**: Tasks and PRDs are clearly separated
-- **Scalable**: Easy to organize large numbers of tasks and documents
-
-### Task File Format
-
-Each task file in `.agent/TASKS/` should follow this format:
-
-```markdown
-## Task: Your Task Title
-
-**ID:** unique-task-id
-**Label:** Your Task Title
-**Description:** Brief description of the task
-**Type:** Feature|Bug|Enhancement|Research
-**Status:** Backlog|To Do|Testing|Done
-**Priority:** High|Medium|Low
-**Order:** 1
-**Created:** 2025-01-01
-**Updated:** 2025-01-01
-**PRD:** [Link](../PRDS/your-prd-file.md)
-
----
-
-## Additional Notes
-
-Your task details here...
-```
-
-### PRD File Format
-
-PRD files in `.agent/PRDS/` can be any markdown format. The extension will render them in the preview panel.
-
-## Requirements
-
-- VS Code 1.80.0 or higher (or Claude Code for Ralph Loop feature)
-- Workspace must contain `.agent/TASKS/` directories
-- Task files must follow the Kanban markdown format
-- PRD files should be in `.agent/PRDS/` (optional but recommended)
-
-### Optional Requirements
-
-- **Ralph Loop**: Requires Claude Code and the `ralph-wiggum` plugin installed
-  - Install plugin: `/plugin install ralph-wiggum` in Claude Code
-  - See [Step 6: Using Ralph Loop](#step-6-using-ralph-loop-for-task-execution) for details
-- **Cursor Cloud Agent**: Requires Cursor IDE (not VS Code) and Cursor API key
-  - See [Step 5: Setting Up Cursor Cloud Agent](#step-5-setting-up-cursor-cloud-agent-optional) for details
-
-## Structure
-
-The extension scans for:
-
-- `.agent/TASKS/**/*.md` files (excluding README.md)
-- `.agent/PRDS/**/*.md` files for PRD previews
-- Recursively across all workspace folders
-- Parses structured metadata from task files
-
 ## Development
-
-For detailed development instructions, see [DEVELOPMENT.md](./DEVELOPMENT.md).
-
-### Quick Start
 
 ```bash
 # Install dependencies
 bun install
 
-# Compile TypeScript
-bun run compile
-
-# Watch mode (auto-compile on changes)
+# Watch mode (auto-compile)
 bun run watch
 
-# Test the extension
-# Press F5 in VS Code to launch Extension Development Host
-# Or see DEVELOPMENT.md for complete testing workflow
+# Launch Extension Development Host
+# Press F5 in VS Code
+
+# Generate screenshot for README
+bun run screenshot
+
+# Package extension
+bun run package
 ```
 
-### Development Workflow
+See [DEVELOPMENT.md](./DEVELOPMENT.md) for complete development guide.
 
-1. **Start watch mode** (optional, for auto-compilation):
-   ```bash
-   bun run watch
-   ```
+## Configuration
 
-2. **Launch Extension Development Host**: Press `F5` in VS Code
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `kaiban.columns.enabled` | `["To Do", "Doing", "Testing", "Done"]` | Columns to display |
+| `kaiban.task.basePath` | `.agent/TASKS` | Task files location |
+| `kaiban.prd.basePath` | `.agent/PRDS` | PRD files location |
+| `kaiban.ai.defaultProvider` | `openrouter` | Default AI provider |
+| `kaiban.claude.useRalphLoop` | `false` | Use Ralph Loop plugin |
 
-3. **Test your changes**:
-   - Make changes in `src/`
-   - Save (watch mode auto-compiles)
-   - Press `Cmd+R` in Extension Development Host to reload
-   - Repeat!
+## Requirements
 
-See [DEVELOPMENT.md](./DEVELOPMENT.md) for complete testing, debugging, and development guide.
+- VS Code 1.105.0+ (or Cursor)
+- Workspace with `.agent/TASKS/` directory
 
-## About Kaiban Board
+### Optional
 
-**Kaiban Board** combines:
-
-- **AI** - Intelligent task management
-- **Kanban** - Visual workflow organization
-- **Markdown** - Simple, readable task format
-
-Perfect for developers who want AI-enhanced task visualization in their markdown-based workflows.
+- **Ralph Loop**: Claude Code + `ralph-wiggum` plugin
+- **Cursor Cloud**: Cursor IDE + API key
 
 ## License
 
 MIT
 
-## Website
+---
 
-Visit us at **[kaibanboard.com](https://kaibanboard.com)**
+<p align="center">
+  <a href="https://kaibanboard.com">kaibanboard.com</a> •
+  <a href="https://github.com/shipshitdev/kaibanboard.com/issues">Report Bug</a> •
+  <a href="https://github.com/shipshitdev/kaibanboard.com/issues">Request Feature</a>
+</p>
