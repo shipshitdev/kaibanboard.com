@@ -12,6 +12,8 @@ const mockGroupByStatus = vi.fn().mockReturnValue({
 });
 const mockUpdateTaskStatus = vi.fn();
 const mockRejectTask = vi.fn();
+const mockUpdateTaskOrder = vi.fn();
+const mockUpdateTaskPRD = vi.fn();
 const mockGetAvailableProviders = vi.fn().mockResolvedValue([]);
 const mockGetAdapter = vi.fn();
 const mockGetEnabledAdapters = vi.fn().mockResolvedValue([]);
@@ -22,6 +24,8 @@ vi.mock("./taskParser", () => ({
     parseTasks = mockParseTasks;
     groupByStatus = mockGroupByStatus;
     updateTaskStatus = mockUpdateTaskStatus;
+    updateTaskOrder = mockUpdateTaskOrder;
+    updateTaskPRD = mockUpdateTaskPRD;
     rejectTask = mockRejectTask;
   },
 }));
@@ -103,6 +107,8 @@ describe("KanbanViewProvider", () => {
       Done: [],
     });
     mockUpdateTaskStatus.mockClear().mockResolvedValue(undefined);
+    mockUpdateTaskOrder.mockClear().mockResolvedValue(undefined);
+    mockUpdateTaskPRD.mockClear().mockResolvedValue(undefined);
     mockRejectTask.mockClear().mockResolvedValue(undefined);
     mockGetAvailableProviders.mockClear().mockResolvedValue([]);
     mockGetAdapter.mockClear();
@@ -127,6 +133,7 @@ describe("KanbanViewProvider", () => {
 
     mockWebview = {
       html: "",
+      asWebviewUri: vi.fn((uri: unknown) => uri),
       postMessage: vi.fn(),
       onDidReceiveMessage: vi.fn((handler) => {
         messageHandler = handler;
@@ -145,6 +152,7 @@ describe("KanbanViewProvider", () => {
 
     mockContext = {
       subscriptions: [],
+      extensionUri: vscode.Uri.file("/extension"),
     } as unknown as vscode.ExtensionContext;
 
     provider = new KanbanViewProvider(mockContext);
@@ -163,11 +171,12 @@ describe("KanbanViewProvider", () => {
 
       expect(vscode.window.createWebviewPanel).toHaveBeenCalledWith(
         "kaibanBoard",
-        "Kaiban Markdown",
+        "Kaiban Board",
         vscode.ViewColumn.One,
         {
           enableScripts: true,
           retainContextWhenHidden: true,
+          localResourceRoots: [{ fsPath: "/extension/media" }],
         }
       );
     });
@@ -195,7 +204,7 @@ describe("KanbanViewProvider", () => {
       await provider.show();
 
       expect(mockWebview.html).toContain("<!DOCTYPE html>");
-      expect(mockWebview.html).toContain("Kaiban Markdown");
+      expect(mockWebview.html).toContain("Kaiban Board");
     });
 
     it("should clear panel reference on dispose", async () => {
@@ -323,10 +332,12 @@ describe("KanbanViewProvider", () => {
 
         await messageHandler({ command: "loadPRD", prdPath: "./prd/test.md" });
 
-        expect(mockWebview.postMessage).toHaveBeenCalledWith({
-          command: "updatePRDContent",
-          content: expect.stringContaining("PRD Content"),
-        });
+        expect(mockWebview.postMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            command: "updatePRDContent",
+            content: expect.stringContaining("PRD Content"),
+          })
+        );
       });
 
       it("should resolve PRD path containing base path directory", async () => {
@@ -343,10 +354,12 @@ describe("KanbanViewProvider", () => {
           prdPath: "../../PRDS/specs/prd.md",
         });
 
-        expect(mockWebview.postMessage).toHaveBeenCalledWith({
-          command: "updatePRDContent",
-          content: expect.stringContaining("Found PRD"),
-        });
+        expect(mockWebview.postMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            command: "updatePRDContent",
+            content: expect.stringContaining("Found PRD"),
+          })
+        );
       });
 
       it("should resolve PRD path with base path segment only", async () => {
@@ -363,10 +376,12 @@ describe("KanbanViewProvider", () => {
           prdPath: "../PRDS",
         });
 
-        expect(mockWebview.postMessage).toHaveBeenCalledWith({
-          command: "updatePRDContent",
-          content: expect.stringContaining("Base Path PRD"),
-        });
+        expect(mockWebview.postMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            command: "updatePRDContent",
+            content: expect.stringContaining("Base Path PRD"),
+          })
+        );
       });
 
       it("should resolve simple relative PRD paths", async () => {
@@ -383,10 +398,12 @@ describe("KanbanViewProvider", () => {
           prdPath: "docs/prd.md",
         });
 
-        expect(mockWebview.postMessage).toHaveBeenCalledWith({
-          command: "updatePRDContent",
-          content: expect.stringContaining("Simple PRD"),
-        });
+        expect(mockWebview.postMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            command: "updatePRDContent",
+            content: expect.stringContaining("Simple PRD"),
+          })
+        );
       });
 
       it("should fall back to task file path when base path lookup fails", async () => {
@@ -406,10 +423,12 @@ describe("KanbanViewProvider", () => {
           taskFilePath: "/workspace/.agent/TASKS/task.md",
         });
 
-        expect(mockWebview.postMessage).toHaveBeenCalledWith({
-          command: "updatePRDContent",
-          content: expect.stringContaining("Fallback PRD"),
-        });
+        expect(mockWebview.postMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            command: "updatePRDContent",
+            content: expect.stringContaining("Fallback PRD"),
+          })
+        );
       });
 
       it("should keep searching when PRD content is empty across strategies", async () => {
@@ -428,10 +447,12 @@ describe("KanbanViewProvider", () => {
         });
 
         expect(vscode.workspace.openTextDocument).toHaveBeenCalledTimes(3);
-        expect(mockWebview.postMessage).toHaveBeenCalledWith({
-          command: "updatePRDContent",
-          content: expect.stringContaining("not found"),
-        });
+        expect(mockWebview.postMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            command: "updatePRDContent",
+            content: expect.stringContaining("No PRD found"),
+          })
+        );
       });
 
       it("should handle absolute PRD paths without workspace fallback", async () => {
@@ -444,10 +465,12 @@ describe("KanbanViewProvider", () => {
         await messageHandler({ command: "loadPRD", prdPath: "/tmp/prd.md" });
 
         expect(vscode.workspace.openTextDocument).toHaveBeenCalledTimes(1);
-        expect(mockWebview.postMessage).toHaveBeenCalledWith({
-          command: "updatePRDContent",
-          content: expect.stringContaining("not found"),
-        });
+        expect(mockWebview.postMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            command: "updatePRDContent",
+            content: expect.stringContaining("No PRD found"),
+          })
+        );
       });
 
       it("should post not found message when PRD file not found", async () => {
@@ -459,10 +482,12 @@ describe("KanbanViewProvider", () => {
 
         await messageHandler({ command: "loadPRD", prdPath: "./prd/test.md" });
 
-        expect(mockWebview.postMessage).toHaveBeenCalledWith({
-          command: "updatePRDContent",
-          content: expect.stringContaining("not found"),
-        });
+        expect(mockWebview.postMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            command: "updatePRDContent",
+            content: expect.stringContaining("No PRD found"),
+          })
+        );
       });
 
       it("should return early when no workspace folders", async () => {
@@ -487,10 +512,12 @@ describe("KanbanViewProvider", () => {
 
         await messageHandler({ command: "loadPRD", prdPath: "./prd/test.md" });
 
-        expect(mockWebview.postMessage).toHaveBeenCalledWith({
-          command: "updatePRDContent",
-          content: expect.stringContaining("Found in second"),
-        });
+        expect(mockWebview.postMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            command: "updatePRDContent",
+            content: expect.stringContaining("Found in second"),
+          })
+        );
       });
 
       it("should handle error during loadPRD content loading", async () => {
@@ -504,10 +531,12 @@ describe("KanbanViewProvider", () => {
 
         await messageHandler({ command: "loadPRD", prdPath: "./prd/test.md" });
 
-        expect(mockWebview.postMessage).toHaveBeenCalledWith({
-          command: "updatePRDContent",
-          content: expect.stringContaining("Error loading PRD"),
-        });
+        expect(mockWebview.postMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            command: "updatePRDContent",
+            content: expect.stringContaining("Error loading PRD"),
+          })
+        );
       });
     });
 
@@ -539,36 +568,26 @@ describe("KanbanViewProvider", () => {
       });
     });
 
-    describe("rejectTask", () => {
-      it("should reject task and show confirmation", async () => {
-        mockRejectTask.mockResolvedValue(undefined);
-        const refreshSpy = vi.spyOn(provider, "refresh").mockResolvedValue(undefined);
+    describe("updateTaskOrder command", () => {
+      it("should update task order when status is unchanged", async () => {
+        await messageHandler({
+          command: "updateTaskOrder",
+          taskId: "task-001",
+          order: 2,
+        });
 
-        const internal = provider as unknown as {
-          rejectTask: (taskId: string, note: string) => Promise<void>;
-        };
-
-        await internal.rejectTask("task-001", "Needs revision");
-
-        expect(mockRejectTask).toHaveBeenCalledWith("task-001", "Needs revision");
-        expect(refreshSpy).toHaveBeenCalled();
-        expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
-          "Task rejected and moved back to To Do"
-        );
+        expect(mockUpdateTaskOrder).toHaveBeenCalledWith("task-001", 2);
       });
 
-      it("should show error message when rejection fails", async () => {
-        mockRejectTask.mockRejectedValue(new Error("Reject failed"));
+      it("should update task status and order when status changes", async () => {
+        await messageHandler({
+          command: "updateTaskOrder",
+          taskId: "task-001",
+          order: 1,
+          newStatus: "Doing",
+        });
 
-        const internal = provider as unknown as {
-          rejectTask: (taskId: string, note: string) => Promise<void>;
-        };
-
-        await internal.rejectTask("task-001", "Needs revision");
-
-        expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-          "Failed to reject task: Error: Reject failed"
-        );
+        expect(mockUpdateTaskStatus).toHaveBeenCalledWith("task-001", "Doing", 1);
       });
     });
 
@@ -609,6 +628,144 @@ describe("KanbanViewProvider", () => {
       it("should execute PRD path configuration command", async () => {
         await messageHandler({ command: "openSettings" });
         expect(vscode.commands.executeCommand).toHaveBeenCalledWith("kaiban.configurePRDPath");
+      });
+    });
+
+    describe("openExtensionSettings command", () => {
+      it("should open extension settings", async () => {
+        await messageHandler({ command: "openExtensionSettings" });
+
+        expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+          "workbench.action.openSettings",
+          "kaiban"
+        );
+      });
+    });
+
+    describe("createPRD command", () => {
+      it("should create a PRD file and link it to the task", async () => {
+        vi.mocked(vscode.workspace).workspaceFolders = [
+          { uri: { fsPath: "/workspace" } },
+        ] as unknown as readonly vscode.WorkspaceFolder[];
+
+        const task = buildTask({
+          id: "task-123",
+          label: "New Feature",
+          description: "Feature description",
+        });
+        mockParseTasks.mockResolvedValue([task]);
+
+        await messageHandler({ command: "createPRD", taskId: "task-123", prdPath: "" });
+
+        expect(vscode.workspace.fs.createDirectory).toHaveBeenCalledWith(
+          expect.objectContaining({ fsPath: "/workspace/.agent/PRDS" })
+        );
+        expect(vscode.workspace.fs.writeFile).toHaveBeenCalledWith(
+          expect.objectContaining({ fsPath: "/workspace/.agent/PRDS/new-feature.md" }),
+          expect.any(Uint8Array)
+        );
+        expect(mockUpdateTaskPRD).toHaveBeenCalledWith("task-123", "../.agent/PRDS/new-feature.md");
+        expect(vscode.workspace.openTextDocument).toHaveBeenCalledWith(
+          expect.objectContaining({ fsPath: "/workspace/.agent/PRDS/new-feature.md" })
+        );
+        expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+          "PRD created: new-feature.md"
+        );
+      });
+
+      it("should show an error when no workspace is open", async () => {
+        vi.mocked(vscode.workspace).workspaceFolders = undefined;
+
+        await messageHandler({ command: "createPRD", taskId: "task-123", prdPath: "" });
+
+        expect(vscode.window.showErrorMessage).toHaveBeenCalledWith("No workspace folder open");
+      });
+    });
+
+    describe("editPRD command", () => {
+      it("should open the PRD file from the configured base path", async () => {
+        vi.mocked(vscode.workspace).workspaceFolders = [
+          { uri: { fsPath: "/workspace" } },
+        ] as unknown as readonly vscode.WorkspaceFolder[];
+
+        await messageHandler({
+          command: "editPRD",
+          prdPath: "../.agent/PRDS/test-prd.md",
+        });
+
+        expect(vscode.workspace.openTextDocument).toHaveBeenCalledWith(
+          expect.objectContaining({ fsPath: "/workspace/.agent/PRDS/test-prd.md" })
+        );
+        expect(vscode.window.showTextDocument).toHaveBeenCalled();
+      });
+    });
+
+    describe("batch execution commands", () => {
+      it("should warn when no tasks are provided", async () => {
+        await messageHandler({ command: "startBatchExecution", taskIds: [] });
+
+        expect(vscode.window.showWarningMessage).toHaveBeenCalledWith("No tasks to execute");
+      });
+
+      it("should warn when batch execution is already running", async () => {
+        const internal = provider as unknown as { isBatchExecuting: boolean };
+        internal.isBatchExecuting = true;
+
+        await messageHandler({ command: "startBatchExecution", taskIds: ["task-1"] });
+
+        expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+          "Batch execution already in progress"
+        );
+      });
+
+      it("should start batch execution and notify the webview", async () => {
+        const executeNextBatchTaskSpy = vi
+          .spyOn(
+            provider as unknown as { executeNextBatchTask: () => Promise<void> },
+            "executeNextBatchTask"
+          )
+          .mockResolvedValue(undefined);
+
+        await messageHandler({
+          command: "startBatchExecution",
+          taskIds: ["task-1", "task-2"],
+        });
+
+        expect(mockWebview.postMessage).toHaveBeenCalledWith({
+          command: "batchExecutionStarted",
+          total: 2,
+          taskIds: ["task-1", "task-2"],
+        });
+        expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+          "Starting batch execution of 2 tasks"
+        );
+        expect(executeNextBatchTaskSpy).toHaveBeenCalled();
+      });
+
+      it("should cancel batch execution and dispose the terminal", async () => {
+        const internal = provider as unknown as {
+          isBatchExecuting: boolean;
+          batchExecutionQueue: string[];
+          currentBatchIndex: number;
+          claudeTerminals: Map<string, vscode.Terminal>;
+          cleanupTaskTracking: (taskId: string, includeTerminal?: boolean) => void;
+        };
+        const terminal = { dispose: vi.fn() } as unknown as vscode.Terminal;
+
+        internal.isBatchExecuting = true;
+        internal.batchExecutionQueue = ["task-123"];
+        internal.currentBatchIndex = 0;
+        internal.claudeTerminals.set("task-123", terminal);
+
+        const cleanupSpy = vi.spyOn(internal, "cleanupTaskTracking");
+
+        await messageHandler({ command: "cancelBatchExecution" });
+
+        expect(terminal.dispose).toHaveBeenCalled();
+        expect(cleanupSpy).toHaveBeenCalledWith("task-123", true);
+        expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+          "Batch execution cancelled"
+        );
       });
     });
 
@@ -956,6 +1113,15 @@ describe("KanbanViewProvider", () => {
 
   describe("getWebviewContent", () => {
     it("should generate HTML with all four columns", async () => {
+      const task = buildTask({ status: "To Do" });
+      mockParseTasks.mockResolvedValue([task]);
+      mockGroupByStatus.mockReturnValue({
+        "To Do": [task],
+        Doing: [],
+        Testing: [],
+        Done: [],
+      });
+
       await provider.show();
 
       expect(mockWebview.html).toContain("To Do");
@@ -967,7 +1133,7 @@ describe("KanbanViewProvider", () => {
     it("should show empty state welcome when board is empty", async () => {
       await provider.show();
 
-      expect(mockWebview.html).toContain("Welcome to Kaiban Markdown!");
+      expect(mockWebview.html).toContain("Welcome to Kaiban Board!");
     });
 
     it("should render tasks with correct priority classes", async () => {
@@ -1227,7 +1393,7 @@ describe("KanbanViewProvider", () => {
       expect(mockWebview.html).toContain("rejection-badge");
     });
 
-    it("should show completed indicator for done tasks", async () => {
+    it("should dim completed tasks without showing a done badge", async () => {
       const tasks: Task[] = [
         {
           id: "1",
@@ -1261,7 +1427,7 @@ describe("KanbanViewProvider", () => {
       const newProvider = new KanbanViewProvider(mockContext);
       await newProvider.show();
 
-      expect(mockWebview.html).toContain("[Done]");
+      expect(mockWebview.html).not.toContain("[Done]");
       expect(mockWebview.html).toContain("completed");
     });
 
@@ -1286,7 +1452,7 @@ describe("KanbanViewProvider", () => {
       const newProvider = new KanbanViewProvider(mockContext);
       await newProvider.show();
 
-      expect(mockWebview.html).toContain("agent-running-badge");
+      expect(mockWebview.html).toContain("agent-running");
       expect(mockWebview.html).toContain("provider-openai");
     });
   });

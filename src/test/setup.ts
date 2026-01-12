@@ -11,6 +11,7 @@ vi.mock("vscode", () => {
         dispose: vi.fn(),
         webview: {
           html: "",
+          asWebviewUri: vi.fn((uri: unknown) => uri),
           postMessage: vi.fn(),
           onDidReceiveMessage: vi.fn(() => mockDisposable),
         },
@@ -22,15 +23,28 @@ vi.mock("vscode", () => {
       showTextDocument: vi.fn().mockResolvedValue(undefined),
       showQuickPick: vi.fn().mockResolvedValue(undefined),
       showInputBox: vi.fn().mockResolvedValue(undefined),
+      createTerminal: vi.fn(() => ({
+        show: vi.fn(),
+        sendText: vi.fn(),
+        dispose: vi.fn(),
+      })),
     },
     workspace: {
       workspaceFolders: undefined,
+      fs: {
+        createDirectory: vi.fn().mockResolvedValue(undefined),
+        writeFile: vi.fn().mockResolvedValue(undefined),
+      },
       openTextDocument: vi.fn().mockResolvedValue({}),
       getConfiguration: vi.fn().mockReturnValue({
         get: vi.fn().mockReturnValue(""),
         update: vi.fn().mockResolvedValue(undefined),
       }),
       onDidChangeConfiguration: vi.fn(() => mockDisposable),
+      createFileSystemWatcher: vi.fn(() => ({
+        onDidChange: vi.fn(),
+        dispose: vi.fn(),
+      })),
     },
     commands: {
       registerCommand: vi.fn(() => mockDisposable),
@@ -47,6 +61,12 @@ vi.mock("vscode", () => {
       One: 1,
       Two: 2,
       Three: 3,
+    },
+    RelativePattern: class {
+      constructor(
+        public base: { fsPath: string },
+        public pattern: string
+      ) {}
     },
     ConfigurationTarget: {
       Workspace: 1,

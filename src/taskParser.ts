@@ -358,6 +358,46 @@ ${orderLine}**Created:** ${task.created}
   }
 
   /**
+   * Update task PRD path by ID
+   */
+  public async updateTaskPRD(taskId: string, prdPath: string): Promise<void> {
+    const tasks = await this.parseTasks();
+    const task = tasks.find((t) => t.id === taskId);
+
+    if (!task) {
+      throw new Error(`Task with ID ${taskId} not found`);
+    }
+
+    // Read the file content
+    const content = fs.readFileSync(task.filePath, "utf-8");
+    const lines = content.split("\n");
+
+    // Update PRD and timestamp
+    const now = new Date().toISOString();
+    let prdLineExists = false;
+    const updatedLines = lines.map((line) => {
+      if (line.startsWith("**PRD:**")) {
+        prdLineExists = true;
+        return `**PRD:** [Link](${prdPath})`;
+      } else if (line.startsWith("**Updated:**")) {
+        return `**Updated:** ${now}`;
+      }
+      return line;
+    });
+
+    // If PRD line doesn't exist, insert it after Updated
+    if (!prdLineExists) {
+      const updatedIndex = updatedLines.findIndex((line) => line.startsWith("**Updated:**"));
+      if (updatedIndex >= 0) {
+        updatedLines.splice(updatedIndex + 1, 0, `**PRD:** [Link](${prdPath})`);
+      }
+    }
+
+    // Write back to file
+    fs.writeFileSync(task.filePath, updatedLines.join("\n"), "utf-8");
+  }
+
+  /**
    * Update PRD file status to sync with task status
    */
   private async updatePRDStatus(

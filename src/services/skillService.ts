@@ -24,8 +24,6 @@ export class SkillService {
     };
   }
 
-
-
   /**
    * Run agent-folder-init skill via Claude CLI
    * Creates .agent/ folder structure for a project

@@ -447,11 +447,6 @@ export function activate(context: vscode.ExtensionContext) {
       // Show success message
       vscode.window.showInformationMessage(`Task created: ${fileName}`);
 
-      // Open the file
-      const uri = vscode.Uri.file(filePath);
-      const document = await vscode.workspace.openTextDocument(uri);
-      await vscode.window.showTextDocument(document);
-
       // Refresh board if it's open
       if (kanbanView) {
         await kanbanView.refresh();

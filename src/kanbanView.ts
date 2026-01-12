@@ -82,11 +82,12 @@ export class KanbanViewProvider {
 
     this.panel = vscode.window.createWebviewPanel(
       "kaibanBoard",
-      "Kaiban Markdown",
+      "Kaiban Board",
       vscode.ViewColumn.One,
       {
         enableScripts: true,
         retainContextWhenHidden: true,
+        localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, "media")],
       }
     );
 
@@ -106,6 +107,9 @@ export class KanbanViewProvider {
             break;
           case "openSettings":
             await vscode.commands.executeCommand("kaiban.configurePRDPath");
+            break;
+          case "openExtensionSettings":
+            await vscode.commands.executeCommand("workbench.action.openSettings", "kaiban");
             break;
           case "loadPRD":
             await this.loadPRDContent(message.prdPath, message.taskFilePath);
@@ -142,6 +146,12 @@ export class KanbanViewProvider {
             break;
           case "createTask":
             await vscode.commands.executeCommand("kaiban.createTask");
+            break;
+          case "createPRD":
+            await this.handleCreatePRD(message.taskId, message.prdPath);
+            break;
+          case "editPRD":
+            await this.handleEditPRD(message.prdPath);
             break;
           case "startBatchExecution":
             await this.handleStartBatchExecution(message.taskIds);
@@ -273,11 +283,15 @@ export class KanbanViewProvider {
         this.panel.webview.postMessage({
           command: "updatePRDContent",
           content: renderedContent,
+          prdExists: true,
+          prdPath: prdPath,
         });
       } else {
         this.panel.webview.postMessage({
           command: "updatePRDContent",
-          content: `<p>PRD file not found. Tried: ${prdPath}</p>`,
+          content: `<p class="prd-not-found">No PRD found for this task.</p>`,
+          prdExists: false,
+          prdPath: prdPath,
         });
       }
     } catch (error) {
@@ -286,6 +300,164 @@ export class KanbanViewProvider {
         content: `<p>Error loading PRD: ${error}</p>`,
       });
     }
+  }
+
+  private async handleCreatePRD(taskId: string, _suggestedPath: string) {
+    if (!this.panel) return;
+
+    try {
+      const workspaceFolders = vscode.workspace.workspaceFolders;
+      if (!workspaceFolders) {
+        vscode.window.showErrorMessage("No workspace folder open");
+        return;
+      }
+
+      // Get PRD base path from configuration
+      const config = vscode.workspace.getConfiguration("kaiban.prd");
+      const basePath = config.get<string>("basePath", ".agent/PRDS");
+
+      // Get task info
+      const tasks = await this.taskParser.parseTasks();
+      const task = tasks.find((t) => t.id === taskId);
+      if (!task) {
+        vscode.window.showErrorMessage("Task not found");
+        return;
+      }
+
+      // Generate PRD filename from task label
+      const slug = task.label
+        .toLowerCase()
+        .trim()
+        .replace(/[^\w\s-]/g, "")
+        .replace(/[\s_-]+/g, "-")
+        .replace(/^-+|-+$/g, "");
+      const prdFileName = `${slug}.md`;
+
+      // Create PRD directory if needed
+      const prdDir = vscode.Uri.joinPath(workspaceFolders[0].uri, basePath);
+      try {
+        await vscode.workspace.fs.createDirectory(prdDir);
+      } catch (_e) {
+        // Directory may already exist
+      }
+
+      // Create PRD file with template
+      const prdUri = vscode.Uri.joinPath(prdDir, prdFileName);
+      const prdTemplate = this.generatePRDTemplate(task.label, task.description || "");
+      await vscode.workspace.fs.writeFile(prdUri, Buffer.from(prdTemplate, "utf8"));
+
+      // Update task file to link to PRD
+      const relativePrdPath = `../${basePath}/${prdFileName}`;
+      await this.taskParser.updateTaskPRD(taskId, relativePrdPath);
+
+      // Open PRD for editing
+      const document = await vscode.workspace.openTextDocument(prdUri);
+      await vscode.window.showTextDocument(document);
+
+      vscode.window.showInformationMessage(`PRD created: ${prdFileName}`);
+
+      // Refresh to show updated PRD link
+      await this.refresh();
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to create PRD: ${error}`);
+    }
+  }
+
+  private async handleEditPRD(prdPath: string) {
+    try {
+      const workspaceFolders = vscode.workspace.workspaceFolders;
+      if (!workspaceFolders) return;
+
+      // Get PRD base path from configuration
+      const config = vscode.workspace.getConfiguration("kaiban.prd");
+      const basePath = config.get<string>("basePath", ".agent/PRDS");
+
+      // Resolve PRD path - Try configured base path first
+      const basePathDir = path.basename(basePath);
+      let relativePrdPath = prdPath;
+
+      if (prdPath.includes(`${basePathDir}/`)) {
+        const index = prdPath.indexOf(`${basePathDir}/`);
+        relativePrdPath = prdPath.substring(index + basePathDir.length + 1);
+      } else if (prdPath.startsWith("../") || prdPath.startsWith("./")) {
+        const parts = prdPath.split("/");
+        let startIndex = 0;
+        for (let i = 0; i < parts.length; i++) {
+          if (parts[i] !== ".." && parts[i] !== "." && parts[i] !== "") {
+            startIndex = i;
+            break;
+          }
+        }
+        if (parts[startIndex] === basePathDir) {
+          relativePrdPath = parts.slice(startIndex + 1).join("/");
+        } else {
+          relativePrdPath = parts.slice(startIndex).join("/");
+        }
+      }
+
+      const baseUri = vscode.Uri.joinPath(workspaceFolders[0].uri, basePath);
+      const prdUri = vscode.Uri.joinPath(baseUri, relativePrdPath);
+
+      const document = await vscode.workspace.openTextDocument(prdUri);
+      await vscode.window.showTextDocument(document);
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to open PRD: ${error}`);
+    }
+  }
+
+  private generatePRDTemplate(title: string, description: string): string {
+    const now = new Date().toISOString().split("T")[0];
+    return `# PRD: ${title}
+
+**Created:** ${now}
+**Status:** Draft
+
+---
+
+## Overview
+
+${description || "Brief description of the feature/task."}
+
+## Goals
+
+- Goal 1
+- Goal 2
+
+## Requirements
+
+### Functional Requirements
+
+1. Requirement 1
+2. Requirement 2
+
+### Non-Functional Requirements
+
+- Performance considerations
+- Security considerations
+
+## User Stories
+
+As a [user type], I want [feature] so that [benefit].
+
+## Acceptance Criteria
+
+- [ ] Criterion 1
+- [ ] Criterion 2
+
+## Out of Scope
+
+- Items not included in this scope
+
+## Technical Notes
+
+Implementation details and considerations.
+
+---
+
+## Changelog
+
+- ${now}: Initial draft
+`;
   }
 
   private async updateTaskStatus(taskId: string, newStatus: string) {
@@ -309,11 +481,7 @@ export class KanbanViewProvider {
     try {
       if (newStatus) {
         // If status changed, update both status and order
-        await this.taskParser.updateTaskStatus(
-          taskId,
-          newStatus as Task["status"],
-          order
-        );
+        await this.taskParser.updateTaskStatus(taskId, newStatus as Task["status"], order);
       } else {
         // Only update order
         await this.taskParser.updateTaskOrder(taskId, order);
@@ -321,17 +489,6 @@ export class KanbanViewProvider {
       await this.refresh();
     } catch (error) {
       vscode.window.showErrorMessage(`Failed to update task order: ${error}`);
-    }
-  }
-
-  private async rejectTask(taskId: string, note: string) {
-    try {
-      await this.taskParser.rejectTask(taskId, note);
-      // Refresh the board after rejecting
-      await this.refresh();
-      vscode.window.showInformationMessage(`Task rejected and moved back to To Do`);
-    } catch (error) {
-      vscode.window.showErrorMessage(`Failed to reject task: ${error}`);
     }
   }
 
@@ -747,8 +904,8 @@ export class KanbanViewProvider {
       const task = tasks.find((t) => t.id === taskId);
 
       if (task && (task.status === "Done" || task.status === "Testing")) {
-        // Task completed - clean up
-        this.cleanupCompletionTracking(taskId);
+        // Task completed - clean up (including terminal reference)
+        this.cleanupTaskTracking(taskId, true);
 
         // Check if session documenter is enabled
         const skillSettings = this.skillService.getSettings();
@@ -785,13 +942,13 @@ export class KanbanViewProvider {
     // Clean up after 30 minutes max
     setTimeout(
       () => {
-        this.cleanupCompletionTracking(taskId);
+        this.cleanupTaskTracking(taskId);
       },
       30 * 60 * 1000
     );
   }
 
-  private cleanupCompletionTracking(taskId: string) {
+  private cleanupTaskTracking(taskId: string, includeTerminal = false) {
     const watcher = this.completionWatchers.get(taskId);
     if (watcher) {
       watcher.dispose();
@@ -803,6 +960,10 @@ export class KanbanViewProvider {
       clearInterval(poller);
       this.completionPollers.delete(taskId);
     }
+
+    if (includeTerminal) {
+      this.claudeTerminals.delete(taskId);
+    }
   }
 
   private async handleStopClaudeExecution(taskId: string) {
@@ -810,7 +971,7 @@ export class KanbanViewProvider {
     if (terminal) {
       terminal.dispose(); // Kill the terminal
       this.claudeTerminals.delete(taskId);
-      this.cleanupCompletionTracking(taskId);
+      this.cleanupTaskTracking(taskId);
 
       vscode.window.showInformationMessage("Stopped Claude execution");
 
@@ -991,7 +1152,7 @@ export class KanbanViewProvider {
 
       if (task && (task.status === "Done" || task.status === "Testing")) {
         // Task completed successfully
-        this.cleanupBatchTaskTracking(taskId);
+        this.cleanupTaskTracking(taskId, true);
         this.batchCompletedCount++;
 
         if (this.panel) {
@@ -1024,7 +1185,7 @@ export class KanbanViewProvider {
     setTimeout(
       () => {
         if (this.completionWatchers.has(taskId) && this.isBatchExecuting) {
-          this.cleanupBatchTaskTracking(taskId);
+          this.cleanupTaskTracking(taskId, true);
           this.batchSkippedCount++;
 
           if (this.panel) {
@@ -1043,25 +1204,6 @@ export class KanbanViewProvider {
     );
   }
 
-  private cleanupBatchTaskTracking(taskId: string) {
-    // Clean up watcher
-    const watcher = this.completionWatchers.get(taskId);
-    if (watcher) {
-      watcher.dispose();
-      this.completionWatchers.delete(taskId);
-    }
-
-    // Clean up poller
-    const poller = this.completionPollers.get(taskId);
-    if (poller) {
-      clearInterval(poller);
-      this.completionPollers.delete(taskId);
-    }
-
-    // Clean up terminal reference
-    this.claudeTerminals.delete(taskId);
-  }
-
   private async handleCancelBatchExecution() {
     if (!this.isBatchExecuting) return;
 
@@ -1074,7 +1216,7 @@ export class KanbanViewProvider {
       if (terminal) {
         terminal.dispose();
       }
-      this.cleanupBatchTaskTracking(currentTaskId);
+      this.cleanupTaskTracking(currentTaskId, true);
     }
 
     vscode.window.showInformationMessage("Batch execution cancelled");
@@ -1247,6 +1389,9 @@ export class KanbanViewProvider {
 
     const isEmpty = totalTasks === 0;
 
+    // Track which tasks are currently running via Claude terminal
+    const runningTaskIds = new Set(this.claudeTerminals.keys());
+
     const renderTask = (task: Task) => {
       const priorityClass = task.priority.toLowerCase();
       const completedClass = task.completed ? "completed" : "";
@@ -1255,18 +1400,22 @@ export class KanbanViewProvider {
       const isInDoing = task.status === "Doing";
       const hasAgent = task.claimedBy && task.claimedBy.length > 0;
       const agentPlatform = hasAgent ? task.claimedBy.split("-")[0] : "";
+      // Check if task is running via Claude terminal (but not if already Done)
+      const isRunningViaClaude = runningTaskIds.has(task.id) && task.status !== "Done";
       const canSendToAgent =
         hasAnyApiKey &&
         (isInToDo || isInDoing || isInTesting) &&
         !hasAgent &&
-        task.agentStatus !== "running";
-      const isAgentRunning = task.agentStatus === "running";
+        task.agentStatus !== "running" &&
+        !isRunningViaClaude;
+      const isAgentRunning = task.agentStatus === "running" || isRunningViaClaude;
       const agentStatusClass = task.agentStatus ? `agent-${task.agentStatus}` : "";
+      const runningClass = isRunningViaClaude ? "running" : "";
       const canExecuteViaClaude =
         (isInToDo || isInDoing || isInTesting) && !isAgentRunning && task.status !== "Done";
 
       return `
-        <div class="task-card ${priorityClass} ${completedClass} ${agentStatusClass}"
+        <div class="task-card ${priorityClass} ${completedClass} ${agentStatusClass} ${runningClass}"
              draggable="true"
              data-filepath="${task.filePath}"
              data-task-id="${task.id}"
@@ -1277,14 +1426,12 @@ export class KanbanViewProvider {
              data-order="${task.order !== undefined ? task.order : ""}">
           <div class="task-header">
             <span class="task-title">${this.escapeHtml(task.label)}</span>
-            ${canExecuteViaClaude ? `<button class="play-stop-btn" onclick="event.stopPropagation(); toggleExecution('${task.id}')" title="Execute via Claude CLI">▶</button><button class="rate-limit-btn" onclick="event.stopPropagation(); triggerRateLimitFromUI('${task.id}')" title="Set rate limit wait timer">⏱</button>` : ""}
-            ${task.completed ? '<span class="task-check">[Done]</span>' : ""}
+            ${canExecuteViaClaude || isRunningViaClaude ? `<button class="play-stop-btn${isRunningViaClaude ? " running" : ""}" onclick="event.stopPropagation(); toggleExecution('${task.id}')" title="${isRunningViaClaude ? "Stop execution" : "Execute via Claude CLI"}">${isRunningViaClaude ? "⏹" : "▶"}</button>${!isRunningViaClaude ? `<button class="rate-limit-btn" onclick="event.stopPropagation(); triggerRateLimitFromUI('${task.id}')" title="Set rate limit wait timer">⏱</button>` : ""}` : ""}
           </div>
           <div class="task-meta">
             <span class="badge priority-${priorityClass}">${task.priority}</span>
             <span class="badge type">${task.type}</span>
             ${hasAgent ? `<span class="badge agent-badge ${agentPlatform}">${Icons.bot(14)} ${agentPlatform}</span>` : ""}
-            ${isAgentRunning ? `<span class="badge agent-running-badge">${Icons.refresh(14)} Running</span>` : ""}
             ${task.agentProvider ? `<span class="badge provider-badge provider-${task.agentProvider}">${task.agentProvider}</span>` : ""}
             ${task.rejectionCount > 0 ? `<span class="badge rejection-badge">${Icons.rotateCcw(14)} ${task.rejectionCount}</span>` : ""}
           </div>
@@ -1298,1140 +1445,28 @@ export class KanbanViewProvider {
       `;
     };
 
+    // Get webview URIs for external CSS and JS files
+    const styleUri = this.panel?.webview.asWebviewUri(
+      vscode.Uri.joinPath(this.context.extensionUri, "media", "styles.css")
+    );
+    const scriptUri = this.panel?.webview.asWebviewUri(
+      vscode.Uri.joinPath(this.context.extensionUri, "media", "kanban.js")
+    );
+
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Kanban Board</title>
-  <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
-
-    body {
-      font-family: var(--vscode-font-family);
-      color: var(--vscode-foreground);
-      background-color: var(--vscode-editor-background);
-      padding: 20px;
-    }
-
-    .header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 20px;
-      padding-bottom: 15px;
-      border-bottom: 1px solid var(--vscode-panel-border);
-    }
-
-    .title {
-      font-size: 24px;
-      font-weight: 600;
-    }
-
-    .header-actions {
-      display: flex;
-      gap: 8px;
-      align-items: center;
-    }
-
-    .action-btn {
-      background: var(--vscode-button-background);
-      color: var(--vscode-button-foreground);
-      border: none;
-      padding: 8px 16px;
-      border-radius: 4px;
-      cursor: pointer;
-      font-size: 14px;
-    }
-
-    select.action-btn {
-      padding: 8px 28px 8px 12px;
-      position: relative;
-      cursor: pointer;
-      outline: none;
-      appearance: none;
-      -webkit-appearance: none;
-      -moz-appearance: none;
-      min-width: 120px;
-    }
-
-    select.action-btn.secondary-btn {
-      background-color: var(--vscode-button-secondaryBackground);
-      color: var(--vscode-button-secondaryForeground);
-    }
-
-    select.action-btn.secondary-btn::after {
-      content: '';
-      position: absolute;
-      right: 8px;
-      top: 50%;
-      transform: translateY(-50%);
-      width: 12px;
-      height: 12px;
-      background-color: var(--vscode-button-secondaryForeground);
-      -webkit-mask-image: url("data:image/svg+xml,%3Csvg width='12' height='12' viewBox='0 0 12 12' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M2 4L6 8L10 4' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-      mask-image: url("data:image/svg+xml,%3Csvg width='12' height='12' viewBox='0 0 12 12' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M2 4L6 8L10 4' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-      -webkit-mask-repeat: no-repeat;
-      mask-repeat: no-repeat;
-      -webkit-mask-size: contain;
-      mask-size: contain;
-      -webkit-mask-position: center;
-      mask-position: center;
-      pointer-events: none;
-    }
-
-    select.action-btn option {
-      background: var(--vscode-dropdown-background);
-      color: var(--vscode-dropdown-foreground);
-    }
-
-    .icon-btn {
-      padding: 8px;
-      width: 32px;
-      height: 32px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 16px;
-    }
-
-    .action-btn:hover {
-      background: var(--vscode-button-hoverBackground);
-    }
-
-    .secondary-btn {
-      background: var(--vscode-button-secondaryBackground);
-      color: var(--vscode-button-secondaryForeground);
-    }
-
-    .secondary-btn:hover {
-      background: var(--vscode-button-secondaryHoverBackground);
-    }
-
-
-    .board {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 12px;
-      height: calc(100vh - 100px);
-      position: relative;
-    }
-
-    .board.with-prd {
-      margin-right: 40%;
-      transition: margin-right 0.3s ease;
-    }
-
-    .column {
-      background: var(--vscode-sideBar-background);
-      border-radius: 8px;
-      padding: 15px;
-      display: flex;
-      flex-direction: column;
-      min-height: 0;
-      border-left: 4px solid transparent;
-      transition: opacity 0.2s, transform 0.2s;
-    }
-
-    .column.hidden {
-      display: none;
-    }
-
-    /* Settings dropdown */
-    .settings-dropdown {
-      position: relative;
-      display: inline-block;
-    }
-
-    .settings-panel {
-      position: absolute;
-      top: 100%;
-      right: 0;
-      margin-top: 4px;
-      background: var(--vscode-dropdown-background);
-      border: 1px solid var(--vscode-dropdown-border);
-      border-radius: 6px;
-      padding: 12px;
-      min-width: 180px;
-      z-index: 1000;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-      display: none;
-    }
-
-    .settings-panel.open {
-      display: block;
-    }
-
-    .settings-panel h4 {
-      margin: 0 0 10px 0;
-      font-size: 12px;
-      font-weight: 600;
-      color: var(--vscode-descriptionForeground);
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-
-    .column-toggle {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 6px 0;
-      cursor: pointer;
-      font-size: 13px;
-    }
-
-    .column-toggle:hover {
-      color: var(--vscode-textLink-foreground);
-    }
-
-    .column-toggle input[type="checkbox"] {
-      width: 16px;
-      height: 16px;
-      cursor: pointer;
-      accent-color: var(--vscode-button-background);
-    }
-
-    .settings-divider {
-      height: 1px;
-      background: var(--vscode-panel-border);
-      margin: 10px 0;
-    }
-
-    .settings-link {
-      display: block;
-      padding: 6px 0;
-      font-size: 13px;
-      color: var(--vscode-textLink-foreground);
-      cursor: pointer;
-      text-decoration: none;
-    }
-
-    .settings-link:hover {
-      text-decoration: underline;
-    }
-
-    .column[data-status="Backlog"] {
-      border-left-color: #6b7280;
-      background: rgba(107, 114, 128, 0.05);
-    }
-
-    .column[data-status="To Do"] {
-      border-left-color: #3b82f6;
-      background: rgba(59, 130, 246, 0.05);
-    }
-
-    .column[data-status="Doing"] {
-      border-left-color: #8b5cf6;
-      background: rgba(139, 92, 246, 0.05);
-    }
-
-    .column[data-status="Testing"] {
-      border-left-color: #f59e0b;
-      background: rgba(245, 158, 11, 0.05);
-    }
-
-    .column[data-status="Done"] {
-      border-left-color: #10b981;
-      background: rgba(16, 185, 129, 0.05);
-    }
-
-    .column[data-status="Blocked"] {
-      border-left-color: #ef4444;
-      background: rgba(239, 68, 68, 0.05);
-    }
-
-    .column-header {
-      font-size: 16px;
-      font-weight: 600;
-      margin-bottom: 15px;
-      padding-bottom: 10px;
-      border-bottom: 2px solid var(--vscode-panel-border);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-
-    .column-count {
-      background: var(--vscode-badge-background);
-      color: var(--vscode-badge-foreground);
-      padding: 2px 8px;
-      border-radius: 10px;
-      font-size: 12px;
-    }
-
-    .column-content {
-      flex: 1;
-      overflow-y: auto;
-      overflow-x: hidden;
-    }
-
-    .task-card {
-      background: var(--vscode-editor-background);
-      border: 1px solid var(--vscode-panel-border);
-      border-radius: 6px;
-      padding: 12px;
-      margin-bottom: 10px;
-      cursor: grab;
-      transition: all 0.2s;
-      user-select: none;
-      -webkit-user-select: none;
-    }
-
-    .task-card:active {
-      cursor: grabbing;
-    }
-
-    .task-card:hover {
-      background-color: var(--vscode-list-hoverBackground);
-      border-color: var(--vscode-list-activeSelectionBorder, var(--vscode-panel-border));
-      transform: translateY(-2px);
-      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-    }
-
-    .task-card.selected {
-      border-color: var(--vscode-focusBorder);
-      border-width: 2px;
-      background: var(--vscode-list-activeSelectionBackground);
-    }
-
-    .task-card.completed {
-      opacity: 0.7;
-    }
-
-    .task-card.dragging {
-      opacity: 0.5;
-      cursor: move;
-    }
-
-    .column.drag-over {
-      background: var(--vscode-list-hoverBackground);
-      border: 2px dashed var(--vscode-focusBorder);
-    }
-
-    .task-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: start;
-      margin-bottom: 8px;
-    }
-
-    .task-title {
-      font-weight: 500;
-      line-height: 1.4;
-      flex: 1;
-    }
-
-    .task-check {
-      color: #4caf50;
-      font-size: 18px;
-      margin-left: 8px;
-    }
-
-    .task-meta {
-      display: flex;
-      gap: 6px;
-      flex-wrap: wrap;
-      margin-bottom: 8px;
-    }
-
-    .badge {
-      font-size: 11px;
-      padding: 3px 8px;
-      border-radius: 3px;
-      font-weight: 500;
-      text-transform: uppercase;
-    }
-
-    .priority-high {
-      background: rgba(244, 67, 54, 0.2);
-      color: #f44336;
-    }
-
-    .priority-medium {
-      background: rgba(255, 152, 0, 0.2);
-      color: #ff9800;
-    }
-
-    .priority-low {
-      background: rgba(76, 175, 80, 0.2);
-      color: #4caf50;
-    }
-
-    .type {
-      background: var(--vscode-badge-background);
-      color: var(--vscode-badge-foreground);
-    }
-
-    .agent-badge {
-      background: rgba(33, 150, 243, 0.2);
-      color: #2196f3;
-    }
-
-    .rejection-badge {
-      background: rgba(244, 67, 54, 0.2);
-      color: #f44336;
-    }
-
-    .task-footer {
-      font-size: 11px;
-      color: var(--vscode-descriptionForeground);
-      margin-top: 6px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-
-    .project-name {
-      opacity: 0.8;
-    }
-
-
-    .task-actions {
-      display: flex;
-      gap: 6px;
-    }
-
-    .agent-btn {
-      background: rgba(99, 102, 241, 0.2);
-      color: #6366f1;
-      border: 1px solid #6366f1;
-      padding: 4px 8px;
-      border-radius: 4px;
-      font-size: 12px;
-      cursor: pointer;
-      transition: all 0.2s;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-width: 24px;
-      height: 24px;
-    }
-
-    .agent-btn:hover {
-      background: #6366f1;
-      color: white;
-      color: white;
-    }
-
-    /* Agent status indicators */
-    .task-card.agent-running {
-      border-left: 3px solid #6366f1;
-    }
-
-    .task-card.agent-completed {
-      border-left: 3px solid #22c55e;
-    }
-
-    .task-card.agent-error {
-      border-left: 3px solid #ef4444;
-    }
-
-    .agent-running-badge {
-      background: rgba(99, 102, 241, 0.2);
-      color: #6366f1;
-      animation: pulse 2s infinite;
-    }
-
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.5; }
-    }
-
-    /* Play/Stop button on task cards */
-    .play-stop-btn {
-      background: var(--vscode-button-background);
-      color: var(--vscode-button-foreground);
-      border: none;
-      border-radius: 4px;
-      padding: 2px 8px;
-      cursor: pointer;
-      font-size: 12px;
-      opacity: 0;
-      transition: opacity 0.2s, background 0.2s;
-      margin-left: 8px;
-      flex-shrink: 0;
-    }
-
-    .task-card:hover .play-stop-btn,
-    .play-stop-btn.running {
-      opacity: 1;
-    }
-
-    .play-stop-btn:hover {
-      background: var(--vscode-button-hoverBackground);
-    }
-
-    /* Stop button - red when running */
-    .play-stop-btn.running {
-      background: #ef4444;
-      color: white;
-    }
-
-    .play-stop-btn.running:hover {
-      background: #dc2626;
-    }
-
-    /* Rate limit trigger button - shows next to stop button when running */
-    .rate-limit-btn {
-      display: none;
-      background: #eab308;
-      color: black;
-      border: none;
-      border-radius: 4px;
-      width: 24px;
-      height: 24px;
-      cursor: pointer;
-      font-size: 12px;
-      margin-left: 4px;
-    }
-
-    .task-card.running .rate-limit-btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .rate-limit-btn:hover {
-      background: #ca8a04;
-    }
-
-    /* Running state for task cards - prominent visual */
-    .task-card.running {
-      background: linear-gradient(135deg,
-        rgba(34, 197, 94, 0.15) 0%,
-        rgba(34, 197, 94, 0.05) 100%);
-      border-left: 4px solid #22c55e;
-      box-shadow: 0 0 12px rgba(34, 197, 94, 0.3);
-      position: relative;
-      overflow: hidden;
-    }
-
-    /* Animated running indicator bar */
-    .task-card.running::before {
-      content: '';
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      height: 2px;
-      background: linear-gradient(90deg, transparent, #22c55e, transparent);
-      animation: running-bar 1.5s ease-in-out infinite;
-    }
-
-    @keyframes running-bar {
-      0% { transform: translateX(-100%); }
-      100% { transform: translateX(100%); }
-    }
-
-    /* Rate limit countdown state */
-    .task-card.rate-limited {
-      background: linear-gradient(135deg,
-        rgba(234, 179, 8, 0.15) 0%,
-        rgba(234, 179, 8, 0.05) 100%);
-      border-left: 4px solid #eab308;
-      box-shadow: 0 0 12px rgba(234, 179, 8, 0.3);
-      position: relative;
-    }
-
-    .rate-limit-countdown {
-      display: none;
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: rgba(0, 0, 0, 0.8);
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      border-radius: 8px;
-      z-index: 10;
-    }
-
-    .task-card.rate-limited .rate-limit-countdown {
-      display: flex;
-    }
-
-    .countdown-timer {
-      font-size: 24px;
-      font-weight: bold;
-      color: #eab308;
-      font-family: monospace;
-    }
-
-    .countdown-label {
-      font-size: 11px;
-      color: rgba(255, 255, 255, 0.7);
-      margin-bottom: 8px;
-    }
-
-    .countdown-actions {
-      display: flex;
-      gap: 8px;
-    }
-
-    .countdown-btn {
-      padding: 4px 12px;
-      border: none;
-      border-radius: 4px;
-      font-size: 11px;
-      cursor: pointer;
-    }
-
-    .countdown-btn.retry-now {
-      background: #22c55e;
-      color: white;
-    }
-
-    .countdown-btn.retry-now:hover {
-      background: #16a34a;
-    }
-
-    .countdown-btn.cancel {
-      background: #ef4444;
-      color: white;
-    }
-
-    .countdown-btn.cancel:hover {
-      background: #dc2626;
-    }
-
-    /* Rate limit banner - fixed at top */
-    .rate-limit-banner {
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      background: linear-gradient(90deg, #eab308, #ca8a04);
-      color: black;
-      padding: 12px 20px;
-      display: none;
-      align-items: center;
-      justify-content: space-between;
-      z-index: 1000;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.3);
-    }
-
-    .rate-limit-banner.active {
-      display: flex;
-    }
-
-    .rate-limit-banner-content {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-
-    .rate-limit-banner-timer {
-      font-size: 24px;
-      font-weight: bold;
-      font-family: monospace;
-    }
-
-    .rate-limit-banner-task {
-      font-size: 14px;
-    }
-
-    .rate-limit-banner-actions {
-      display: flex;
-      gap: 8px;
-    }
-
-    .rate-limit-banner-actions button {
-      padding: 6px 16px;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-      font-weight: 500;
-    }
-
-    .rate-limit-banner-actions .retry-btn {
-      background: #22c55e;
-      color: white;
-    }
-
-    .rate-limit-banner-actions .cancel-btn {
-      background: rgba(0,0,0,0.3);
-      color: white;
-    }
-
-    /* Adjust body when banner is active */
-    body.has-rate-limit-banner {
-      padding-top: 60px;
-    }
-
-    /* PRD panel actions */
-    .prd-actions {
-      display: flex;
-      gap: 8px;
-      align-items: center;
-    }
-
-    .play-prd-btn {
-      background: var(--vscode-button-background);
-      color: var(--vscode-button-foreground);
-      border: none;
-      border-radius: 4px;
-      padding: 4px 12px;
-      cursor: pointer;
-      font-size: 12px;
-      transition: background 0.2s;
-    }
-
-    .play-prd-btn:hover {
-      background: var(--vscode-button-hoverBackground);
-    }
-
-    /* Provider badges */
-    .provider-badge {
-      font-size: 9px;
-    }
-
-    .provider-cursor {
-      background: rgba(99, 102, 241, 0.2);
-      color: #6366f1;
-    }
-
-    .provider-openai {
-      background: rgba(16, 163, 127, 0.2);
-      color: #10a37f;
-    }
-
-    .provider-openrouter {
-      background: rgba(168, 85, 247, 0.2);
-      color: #a855f7;
-    }
-
-    .provider-replicate {
-      background: rgba(234, 179, 8, 0.2);
-      color: #eab308;
-    }
-
-    /* Reject Modal */
-    .modal-overlay {
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: rgba(0, 0, 0, 0.5);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 1000;
-    }
-
-    .modal {
-      background: var(--vscode-editor-background);
-      border: 1px solid var(--vscode-panel-border);
-      border-radius: 8px;
-      padding: 20px;
-      width: 400px;
-      max-width: 90%;
-    }
-
-    .modal h3 {
-      margin: 0 0 15px 0;
-      color: var(--vscode-foreground);
-    }
-
-    .modal textarea {
-      width: 100%;
-      min-height: 80px;
-      padding: 8px;
-      border: 1px solid var(--vscode-panel-border);
-      border-radius: 4px;
-      background: var(--vscode-input-background);
-      color: var(--vscode-input-foreground);
-      font-family: var(--vscode-font-family);
-      resize: vertical;
-    }
-
-    .modal-actions {
-      display: flex;
-      gap: 10px;
-      justify-content: flex-end;
-      margin-top: 15px;
-    }
-
-    .modal-btn {
-      padding: 8px 16px;
-      border-radius: 4px;
-      cursor: pointer;
-      font-size: 14px;
-      border: none;
-    }
-
-    .modal-btn-cancel {
-      background: var(--vscode-button-secondaryBackground);
-      color: var(--vscode-button-secondaryForeground);
-    }
-
-    .modal-btn-send {
-      background: #6366f1;
-      color: white;
-    }
-
-    .modal-btn-send:hover {
-      background: #4f46e5;
-    }
-
-    .modal-btn-send:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-
-    /* Agent Modal specific */
-    .agent-modal {
-      width: 500px;
-    }
-
-    .task-preview {
-      background: var(--vscode-input-background);
-      padding: 12px;
-      border-radius: 6px;
-      margin-bottom: 15px;
-    }
-
-    .task-preview strong {
-      display: block;
-      margin-bottom: 4px;
-    }
-
-    .task-preview p {
-      font-size: 12px;
-      color: var(--vscode-descriptionForeground);
-      margin: 0;
-    }
-
-    .form-group {
-      margin-bottom: 15px;
-    }
-
-    .form-group label {
-      display: block;
-      margin-bottom: 6px;
-      font-weight: 500;
-    }
-
-    .form-group select {
-      width: 100%;
-      padding: 8px 12px;
-      border: 1px solid var(--vscode-panel-border);
-      border-radius: 4px;
-      background: var(--vscode-input-background);
-      color: var(--vscode-input-foreground);
-      font-family: var(--vscode-font-family);
-      font-size: 14px;
-    }
-
-    .form-group select:focus {
-      outline: none;
-      border-color: var(--vscode-focusBorder);
-    }
-
-    .provider-options {
-      background: var(--vscode-input-background);
-      padding: 12px;
-      border-radius: 6px;
-      margin-bottom: 15px;
-    }
-
-    .provider-options label {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      cursor: pointer;
-    }
-
-    .provider-options input[type="checkbox"] {
-      width: 16px;
-      height: 16px;
-    }
-
-    .loading-spinner {
-      display: inline-block;
-      width: 16px;
-      height: 16px;
-      border: 2px solid transparent;
-      border-top-color: currentColor;
-      border-radius: 50%;
-      animation: spin 1s linear infinite;
-      margin-left: 8px;
-    }
-
-    @keyframes spin {
-      to { transform: rotate(360deg); }
-    }
-
-    .no-providers-warning {
-      background: rgba(244, 67, 54, 0.1);
-      border: 1px solid #f44336;
-      color: #f44336;
-      padding: 12px;
-      border-radius: 6px;
-      margin-bottom: 15px;
-      font-size: 13px;
-    }
-
-    .no-providers-warning a {
-      color: #f44336;
-      text-decoration: underline;
-    }
-
-    .empty-state {
-      text-align: center;
-      padding: 40px 20px;
-      color: var(--vscode-descriptionForeground);
-      font-style: italic;
-    }
-
-    .empty-state-setup {
-      text-align: center;
-      padding: 60px 40px;
-      color: var(--vscode-foreground);
-      max-width: 600px;
-      margin: 0 auto;
-    }
-
-    .empty-state-setup h3 {
-      font-size: 18px;
-      margin-bottom: 16px;
-      color: var(--vscode-foreground);
-    }
-
-    .empty-state-setup p {
-      margin-bottom: 12px;
-      line-height: 1.6;
-      color: var(--vscode-descriptionForeground);
-    }
-
-    .empty-state-setup code {
-      background: var(--vscode-textCodeBlock-background);
-      padding: 2px 6px;
-      border-radius: 3px;
-      font-family: var(--vscode-editor-font-family);
-      font-size: 13px;
-    }
-
-    .empty-state-setup ol {
-      text-align: left;
-      margin: 20px 0;
-      padding-left: 30px;
-    }
-
-    .empty-state-setup li {
-      margin-bottom: 12px;
-      line-height: 1.6;
-    }
-
-    /* Scrollbar */
-    .column-content::-webkit-scrollbar {
-      width: 8px;
-    }
-
-    .column-content::-webkit-scrollbar-track {
-      background: transparent;
-    }
-
-    .column-content::-webkit-scrollbar-thumb {
-      background: var(--vscode-scrollbarSlider-background);
-      border-radius: 4px;
-    }
-
-    .column-content::-webkit-scrollbar-thumb:hover {
-      background: var(--vscode-scrollbarSlider-hoverBackground);
-    }
-
-    .prd-preview-panel {
-      position: fixed;
-      top: 80px;
-      right: 0;
-      width: 40%;
-      height: calc(100vh - 80px);
-      background: var(--vscode-sideBar-background);
-      border-left: 2px solid var(--vscode-panel-border);
-      padding: 20px;
-      display: flex;
-      flex-direction: column;
-      min-height: 0;
-      box-shadow: -4px 0 12px rgba(0, 0, 0, 0.1);
-      z-index: 1000;
-      overflow: hidden;
-      transform: translateX(100%);
-      transition: transform 0.3s ease-in-out;
-    }
-
-    .prd-preview-panel[data-visible="true"] {
-      transform: translateX(0);
-    }
-
-
-    .prd-header {
-      font-size: 16px;
-      font-weight: 600;
-      margin-bottom: 15px;
-      padding-bottom: 10px;
-      border-bottom: 2px solid var(--vscode-panel-border);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-
-    .prd-content {
-      flex: 1;
-      overflow-y: auto;
-      overflow-x: hidden;
-    }
-
-    .prd-placeholder {
-      text-align: center;
-      padding: 40px 20px;
-      color: var(--vscode-descriptionForeground);
-      font-style: italic;
-    }
-
-    .close-prd-btn {
-      background: transparent;
-      border: none;
-      color: var(--vscode-foreground);
-      cursor: pointer;
-      padding: 4px 8px;
-      border-radius: 4px;
-      font-size: 16px;
-    }
-
-    .close-prd-btn:hover {
-      background: var(--vscode-toolbar-hoverBackground);
-    }
-
-    .prd-markdown {
-      line-height: 1.6;
-    }
-
-    .prd-markdown h1, .prd-markdown h2, .prd-markdown h3 {
-      margin-top: 20px;
-      margin-bottom: 10px;
-      color: var(--vscode-foreground);
-    }
-
-    .prd-markdown p {
-      margin-bottom: 12px;
-    }
-
-    .prd-markdown code {
-      background: var(--vscode-textCodeBlock-background);
-      padding: 2px 4px;
-      border-radius: 3px;
-      font-family: var(--vscode-editor-font-family);
-    }
-
-    .prd-markdown pre {
-      background: var(--vscode-textCodeBlock-background);
-      padding: 12px;
-      border-radius: 6px;
-      overflow-x: auto;
-      margin: 12px 0;
-    }
-
-    /* Column header with actions */
-    .column-header-actions {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    /* Play All button */
-    .play-all-btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-      background: var(--vscode-button-background);
-      color: var(--vscode-button-foreground);
-      border: none;
-      border-radius: 4px;
-      padding: 3px 8px;
-      font-size: 11px;
-      cursor: pointer;
-      transition: opacity 0.2s, background 0.2s;
-    }
-
-    .play-all-btn:hover {
-      background: var(--vscode-button-hoverBackground);
-    }
-
-    .play-all-btn.running {
-      background: #ef4444;
-    }
-
-    .play-all-btn.running:hover {
-      background: #dc2626;
-    }
-
-    .play-all-btn:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-
-    /* Batch progress banner */
-    .batch-progress-banner {
-      position: fixed;
-      bottom: 20px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: var(--vscode-notifications-background);
-      border: 1px solid var(--vscode-notifications-border);
-      border-radius: 8px;
-      padding: 12px 16px;
-      display: flex;
-      align-items: center;
-      gap: 16px;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-      z-index: 1000;
-    }
-
-    .batch-progress-content {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .batch-progress-icon {
-      animation: spin 1s linear infinite;
-    }
-
-    @keyframes spin {
-      from { transform: rotate(0deg); }
-      to { transform: rotate(360deg); }
-    }
-
-    .batch-progress-stats {
-      color: var(--vscode-descriptionForeground);
-      font-size: 12px;
-    }
-
-    .batch-cancel-btn {
-      background: transparent;
-      border: 1px solid var(--vscode-button-border, #444);
-      color: var(--vscode-foreground);
-      padding: 4px 12px;
-      border-radius: 4px;
-      cursor: pointer;
-    }
-
-    .batch-cancel-btn:hover {
-      background: rgba(255, 255, 255, 0.1);
-    }
-  </style>
+  <link rel="stylesheet" href="${styleUri}">
 </head>
 <body>
     <div class="header">
-      <div class="title">Kaiban Markdown</div>
-      <div class="header-actions">
+      <div class="title">Kaiban Board</div>
+      ${
+        !isEmpty
+          ? `<div class="header-actions">
         <button class="action-btn secondary-btn icon-btn" onclick="createTask()" title="Create new task">
           ${Icons.plus(16)}
         </button>
@@ -2467,7 +1502,9 @@ export class KanbanViewProvider {
         <button class="action-btn secondary-btn icon-btn" onclick="refresh()" title="Refresh">
           ${Icons.refresh(16)}
         </button>
-      </div>
+      </div>`
+          : ""
+      }
     </div>
 
   <div class="board" id="kanbanBoard">
@@ -2476,7 +1513,7 @@ export class KanbanViewProvider {
         ? `
     <div style="grid-column: 1 / -1; display: flex; align-items: center; justify-content: center; padding: 40px;">
       <div class="empty-state-setup">
-        <h3>Welcome to Kaiban Markdown!</h3>
+        <h3>Welcome to Kaiban Board!</h3>
         <p>Get started by creating your first task. Here's how:</p>
         <ol>
           <li>Create the folder structure in your workspace root:
@@ -2501,10 +1538,18 @@ export class KanbanViewProvider {
 ## Additional Notes
 Your task details here...</code></pre>
           </li>
-          <li>Click <strong>Refresh</strong> to see your task appear!</li>
+          <li>Click <strong>Refresh</strong> below to see your task appear!</li>
         </ol>
-        <p style="margin-top: 24px; font-size: 13px; color: var(--vscode-descriptionForeground);">
-          📖 See the README for detailed setup instructions and examples.
+        <div class="onboarding-actions" style="margin-top: 24px; display: flex; gap: 12px; justify-content: center;">
+          <button class="action-btn secondary-btn" onclick="openExtensionSettings()" title="Settings">
+            ${Icons.settings(16)} Settings
+          </button>
+          <button class="action-btn primary-btn" onclick="refresh()" title="Refresh">
+            ${Icons.refresh(16)} Refresh
+          </button>
+        </div>
+        <p style="margin-top: 16px; font-size: 13px; color: var(--vscode-descriptionForeground);">
+          See the README for detailed setup instructions and examples.
         </p>
       </div>
     </div>
@@ -2553,16 +1598,34 @@ ${allColumns
         `
     }
 
-    <div class="prd-preview-panel" id="prdPanel" style="display: none; visibility: hidden;">
+    <div class="prd-sidebar" id="prdPanel" style="display: none; visibility: hidden;">
       <div class="prd-header">
         <span>PRD Preview</span>
         <div class="prd-actions">
+          <button class="edit-prd-btn" id="editPrdBtn" onclick="editPRD()" title="Edit PRD" style="display: none;">${Icons.edit(14)} Edit</button>
+          <button class="create-prd-btn" id="createPrdBtn" onclick="createPRD()" title="Create PRD" style="display: none;">${Icons.plus(14)} Create PRD</button>
           <button class="play-prd-btn" id="playPrdBtn" onclick="executePRD()" title="Execute via Claude CLI" style="display: none;">▶ Execute</button>
           <button class="close-prd-btn" onclick="closePRD()" title="Close PRD Panel">×</button>
         </div>
       </div>
       <div class="prd-content" id="prdContent">
         <div class="prd-placeholder">Select a task to view its PRD</div>
+      </div>
+    </div>
+
+    <div class="terminal-panel" id="terminalPanel" style="display: none; visibility: hidden;">
+      <div class="terminal-header">
+        <div class="terminal-title">
+          <span>Terminal</span>
+        </div>
+        <div class="terminal-actions">
+          <button class="terminal-btn" id="terminalClearBtn" onclick="clearTerminal()" title="Clear terminal">Clear</button>
+          <button class="terminal-btn" id="terminalToggleBtn" onclick="toggleTerminal()" title="Collapse/Expand terminal">−</button>
+          <button class="terminal-btn" id="terminalCloseBtn" onclick="closeTerminal()" title="Close terminal">×</button>
+        </div>
+      </div>
+      <div class="terminal-content" id="terminalContent">
+        <div class="terminal-output-line info">Terminal ready. Execute commands to see output here.</div>
       </div>
     </div>
   </div>
@@ -2640,1160 +1703,6 @@ ${allColumns
     </div>
   </div>
 
-  <script>
-    const vscode = acquireVsCodeApi();
-      let draggedElement = null;
-      let isDragging = false;
-      let currentSortMode = 'default'; // 'default', 'priority-asc', 'priority-desc'
-      let originalTaskOrder = new Map(); // Store original order of tasks per column
-
-    // Agent modal state
-    let currentAgentTaskId = null;
-    let availableProviders = [];
-    let availableModels = [];
-
-    // Claude execution state
-    let currentPrdTaskId = null;
-    let runningTasks = new Set();  // Track task IDs that are currently executing
-
-    // Rate limit state
-    let rateLimitTaskId = null;
-    let rateLimitEndTime = null;
-    let rateLimitInterval = null;
-
-    // Rate limit functions
-    function startRateLimitCountdown(taskId, waitSeconds) {
-      rateLimitTaskId = taskId;
-      rateLimitEndTime = Date.now() + (waitSeconds * 1000);
-
-      // Get task name
-      const card = document.querySelector(\`[data-task-id="\${taskId}"]\`);
-      const taskName = card ? card.dataset.label : 'Unknown task';
-      document.getElementById('rateLimitTaskName').textContent = taskName;
-
-      // Show banner
-      document.getElementById('rateLimitBanner').classList.add('active');
-      document.body.classList.add('has-rate-limit-banner');
-
-      // Update task card to show rate-limited state
-      if (card) {
-        card.classList.remove('running');
-        card.classList.add('rate-limited');
-      }
-
-      // Start countdown interval
-      rateLimitInterval = setInterval(updateRateLimitTimer, 1000);
-      updateRateLimitTimer();
-    }
-
-    function updateRateLimitTimer() {
-      if (!rateLimitEndTime) return;
-
-      const remaining = Math.max(0, rateLimitEndTime - Date.now());
-      const minutes = Math.floor(remaining / 60000);
-      const seconds = Math.floor((remaining % 60000) / 1000);
-
-      const timerStr = \`\${minutes.toString().padStart(2, '0')}:\${seconds.toString().padStart(2, '0')}\`;
-      document.getElementById('rateLimitTimer').textContent = timerStr;
-
-      if (remaining <= 0) {
-        // Timer expired - will be handled by extension auto-retry
-        clearRateLimitUI();
-      }
-    }
-
-    function retryRateLimitNow() {
-      if (rateLimitTaskId) {
-        vscode.postMessage({
-          command: 'retryAfterRateLimit',
-          taskId: rateLimitTaskId
-        });
-        clearRateLimitUI();
-      }
-    }
-
-    function cancelRateLimitWait() {
-      if (rateLimitTaskId) {
-        vscode.postMessage({
-          command: 'stopClaudeExecution',
-          taskId: rateLimitTaskId
-        });
-        clearRateLimitUI();
-      }
-    }
-
-    function clearRateLimitUI() {
-      if (rateLimitInterval) {
-        clearInterval(rateLimitInterval);
-        rateLimitInterval = null;
-      }
-
-      // Hide banner
-      document.getElementById('rateLimitBanner').classList.remove('active');
-      document.body.classList.remove('has-rate-limit-banner');
-
-      // Clear task card state
-      if (rateLimitTaskId) {
-        const card = document.querySelector(\`[data-task-id="\${rateLimitTaskId}"]\`);
-        if (card) {
-          card.classList.remove('rate-limited');
-        }
-      }
-
-      rateLimitTaskId = null;
-      rateLimitEndTime = null;
-    }
-
-    function triggerRateLimitFromUI(taskId) {
-      // Allow user to manually trigger rate limit wait from task card
-      const waitMinutes = prompt('Enter wait time in minutes:', '5');
-      if (waitMinutes && !isNaN(parseInt(waitMinutes))) {
-        const waitSeconds = parseInt(waitMinutes) * 60;
-        vscode.postMessage({
-          command: 'triggerRateLimitWait',
-          taskId: taskId,
-          waitSeconds: waitSeconds
-        });
-      }
-    }
-
-    // Claude CLI execution functions
-    function toggleExecution(taskId) {
-      if (runningTasks.has(taskId)) {
-        // Stop the execution
-        vscode.postMessage({
-          command: 'stopClaudeExecution',
-          taskId: taskId
-        });
-      } else {
-        // Start the execution
-        vscode.postMessage({
-          command: 'executeViaClaude',
-          taskId: taskId
-        });
-      }
-    }
-
-    function executePRD() {
-      if (currentPrdTaskId) {
-        toggleExecution(currentPrdTaskId);
-      }
-    }
-
-    function updateTaskRunningState(taskId, isRunning) {
-      const card = document.querySelector(\`[data-task-id="\${taskId}"]\`);
-      if (card) {
-        card.classList.toggle('running', isRunning);
-        const btn = card.querySelector('.play-stop-btn');
-        if (btn) {
-          btn.classList.toggle('running', isRunning);
-          btn.innerHTML = isRunning ? '⏹' : '▶';
-          btn.title = isRunning ? 'Stop execution' : 'Execute via Claude';
-        }
-      }
-
-      // Also update PRD panel button if this task is selected
-      if (currentPrdTaskId === taskId) {
-        const prdBtn = document.getElementById('playPrdBtn');
-        if (prdBtn) {
-          prdBtn.innerHTML = isRunning ? '⏹ Stop' : '▶ Execute';
-          prdBtn.classList.toggle('running', isRunning);
-        }
-      }
-    }
-
-    // Agent modal functions
-    function showAgentModal(taskId) {
-      currentAgentTaskId = taskId;
-
-      // Get task card data
-      const card = document.querySelector(\`[data-task-id="\${taskId}"]\`);
-      if (card) {
-        document.getElementById('agentModalTaskTitle').textContent = card.dataset.label || '';
-        document.getElementById('agentModalTaskDescription').textContent = card.dataset.description || 'No description';
-      }
-
-      // Reset form
-      document.getElementById('providerSelect').value = '';
-      document.getElementById('modelSelectGroup').style.display = 'none';
-      document.getElementById('cursorOptions').style.display = 'none';
-      document.getElementById('sendToAgentBtn').disabled = true;
-      document.getElementById('noProvidersWarning').style.display = 'none';
-      document.getElementById('agentMethod').checked = true;
-      document.getElementById('ralphMethod').checked = false;
-      onExecutionMethodChange();
-
-      // Show modal
-      document.getElementById('agentModal').style.display = 'flex';
-
-      // Request available providers
-      vscode.postMessage({ command: 'getAvailableProviders' });
-    }
-
-    function hideAgentModal() {
-      document.getElementById('agentModal').style.display = 'none';
-      currentAgentTaskId = null;
-    }
-
-    function onProviderChange() {
-      const provider = document.getElementById('providerSelect').value;
-      const modelGroup = document.getElementById('modelSelectGroup');
-      const cursorOptions = document.getElementById('cursorOptions');
-      const sendBtn = document.getElementById('sendToAgentBtn');
-
-      if (!provider) {
-        modelGroup.style.display = 'none';
-        cursorOptions.style.display = 'none';
-        sendBtn.disabled = true;
-        return;
-      }
-
-      // Show/hide Cursor-specific options
-      cursorOptions.style.display = provider === 'cursor' ? 'block' : 'none';
-
-      // For Cursor, no model selection needed (agent mode)
-      if (provider === 'cursor') {
-        modelGroup.style.display = 'none';
-        sendBtn.disabled = false;
-      } else {
-        // Request models for this provider
-        modelGroup.style.display = 'block';
-        document.getElementById('modelSelect').innerHTML = '<option value="">Loading models...</option>';
-        sendBtn.disabled = true;
-        vscode.postMessage({ command: 'getModelsForProvider', provider: provider });
-      }
-    }
-
-    function onModelChange() {
-      const model = document.getElementById('modelSelect').value;
-      document.getElementById('sendToAgentBtn').disabled = !model;
-    }
-
-    function onExecutionMethodChange() {
-      const ralphMethod = document.getElementById('ralphMethod').checked;
-      const agentMethod = document.getElementById('agentMethod').checked;
-      const ralphSection = document.getElementById('ralphSection');
-      const providerGroup = document.getElementById('providerSelectGroup');
-      const modelGroup = document.getElementById('modelSelectGroup');
-      const cursorOptions = document.getElementById('cursorOptions');
-      const sendBtn = document.getElementById('sendToAgentBtn');
-
-      if (ralphMethod) {
-        // Ralph Loop selected
-        ralphSection.style.display = 'block';
-        providerGroup.style.display = 'none';
-        modelGroup.style.display = 'none';
-        cursorOptions.style.display = 'none';
-        sendBtn.disabled = false;
-        sendBtn.textContent = 'Execute with Ralph';
-      } else if (agentMethod) {
-        // AI Agent selected
-        ralphSection.style.display = 'none';
-        providerGroup.style.display = 'block';
-        sendBtn.textContent = 'Send to Agent';
-        // Reset provider selection state
-        const provider = document.getElementById('providerSelect').value;
-        if (!provider) {
-          sendBtn.disabled = true;
-        } else {
-          onProviderChange();
-        }
-      }
-    }
-
-    function confirmSendToAgent() {
-      if (!currentAgentTaskId) return;
-
-      const ralphMethod = document.getElementById('ralphMethod').checked;
-      const agentMethod = document.getElementById('agentMethod').checked;
-
-      if (ralphMethod) {
-        // Execute Ralph command
-        const btn = document.getElementById('sendToAgentBtn');
-        btn.disabled = true;
-        btn.innerHTML = 'Executing... <span class="loading-spinner"></span>';
-
-        vscode.postMessage({
-          command: 'executeRalphCommand',
-          taskId: currentAgentTaskId
-        });
-        return;
-      }
-
-      if (agentMethod) {
-        // Send to AI Agent (existing logic)
-        const provider = document.getElementById('providerSelect').value;
-        const model = document.getElementById('modelSelect').value;
-        const createPR = document.getElementById('createPR').checked;
-
-        if (!provider) {
-          alert('Please select a provider.');
-          return;
-        }
-
-        if (provider !== 'cursor' && !model) {
-          alert('Please select a model.');
-          return;
-        }
-
-        // Show loading state
-        const btn = document.getElementById('sendToAgentBtn');
-        btn.disabled = true;
-        btn.innerHTML = 'Sending... <span class="loading-spinner"></span>';
-
-        vscode.postMessage({
-          command: 'sendToAgent',
-          taskId: currentAgentTaskId,
-          provider: provider,
-          model: model || undefined,
-          options: {
-            createPR: createPR
-          }
-        });
-      }
-    }
-
-    function configureProviders() {
-      hideAgentModal();
-      vscode.postMessage({ command: 'configureProviders' });
-    }
-
-    // Close agent modal on overlay click
-    document.getElementById('agentModal').addEventListener('click', (e) => {
-      if (e.target.id === 'agentModal') {
-        hideAgentModal();
-      }
-    });
-
-    // Click handler for task cards
-    document.addEventListener('click', (e) => {
-      // Ignore clicks if we just finished dragging
-      if (isDragging) {
-        return;
-      }
-
-      // Check if clicking on a link within PRD content first
-      const link = e.target.closest('a');
-      if (link && link.closest('#prdContent')) {
-        e.preventDefault();
-        e.stopPropagation();
-        const href = link.getAttribute('href');
-
-        // Check if it's a relative path (not http/https/mailto)
-        if (href && !href.match(/^(https?:|mailto:|#)/)) {
-          // Load this file in the PRD preview
-          // Try to get task file path from the PRD content's context
-          const prdCard = link.closest('.task-card');
-          const taskFilePath = prdCard ? prdCard.dataset.filepath : undefined;
-          vscode.postMessage({
-            command: 'loadPRD',
-            prdPath: href,
-            taskFilePath: taskFilePath
-          });
-        } else if (href && href.match(/^https?:/)) {
-          // External links should open in browser
-          return true;
-        }
-        return false;
-      }
-
-      const card = e.target.closest('.task-card');
-      if (card) {
-        const prdPath = card.dataset.prdPath;
-
-        // Remove selection from all cards
-        document.querySelectorAll('.task-card').forEach(c => c.classList.remove('selected'));
-
-        // Select current card
-        card.classList.add('selected');
-
-        // Always show PRD panel when task is selected
-        const board = document.getElementById('kanbanBoard');
-        const panel = document.getElementById('prdPanel');
-        const prdContent = document.getElementById('prdContent');
-
-        if (prdPath) {
-          showPRDPreview(prdPath);
-        } else {
-          // If no PRD, show panel with placeholder
-          if (board && panel && prdContent) {
-            board.classList.add('with-prd');
-            panel.style.display = 'flex';
-            panel.style.visibility = 'visible';
-            requestAnimationFrame(() => {
-              panel.setAttribute('data-visible', 'true');
-            });
-            prdContent.innerHTML = '<div class="prd-placeholder">This task has no PRD linked</div>';
-          }
-        }
-      }
-    });
-
-    // Double-click handler for task cards (opens file)
-    document.addEventListener('dblclick', (e) => {
-      const card = e.target.closest('.task-card');
-      if (card) {
-        const filePath = card.dataset.filepath;
-        if (filePath) {
-          vscode.postMessage({
-            command: 'openTask',
-            filePath: filePath
-          });
-        }
-      }
-    });
-
-    // Drag and drop handlers
-    document.addEventListener('dragstart', (e) => {
-      const card = e.target.closest('.task-card');
-      if (card) {
-        isDragging = true;
-        draggedElement = card;
-        card.classList.add('dragging');
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/html', card.innerHTML);
-      }
-    });
-
-    document.addEventListener('dragend', (e) => {
-      const card = e.target.closest('.task-card');
-      if (card) {
-        card.classList.remove('dragging');
-        draggedElement = null;
-      }
-      // Remove drag-over class from all columns
-      document.querySelectorAll('.column').forEach(col => col.classList.remove('drag-over'));
-      // Reset dragging flag after a short delay to allow drop event to process
-      setTimeout(() => { isDragging = false; }, 100);
-    });
-
-    document.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      const column = e.target.closest('.column');
-      if (column && draggedElement) {
-        e.dataTransfer.dropEffect = 'move';
-        // Add visual feedback
-        document.querySelectorAll('.column').forEach(col => col.classList.remove('drag-over'));
-        column.classList.add('drag-over');
-      }
-    });
-
-    document.addEventListener('drop', (e) => {
-      e.preventDefault();
-      const column = e.target.closest('.column');
-
-      if (column && draggedElement) {
-        const newStatus = column.dataset.status;
-        const taskId = draggedElement.dataset.taskId;
-        const currentStatus = draggedElement.dataset.status;
-
-        // Calculate new order based on drop position
-        // First, temporarily move the element to the correct position in DOM
-        const dropTarget = e.target.closest('.task-card');
-        if (dropTarget && dropTarget !== draggedElement && dropTarget.parentElement === column) {
-          // Insert before the target
-          column.insertBefore(draggedElement, dropTarget);
-        } else if (!dropTarget || dropTarget === draggedElement) {
-          // Dropped at end or on empty space - append to end
-          column.appendChild(draggedElement);
-        }
-
-        // Now calculate order based on actual DOM position
-        // Get all task cards in the column after DOM update
-        const allTasksInColumn = Array.from(column.querySelectorAll('.task-card'));
-        const droppedIndex = allTasksInColumn.indexOf(draggedElement);
-        
-        // Calculate order: if there are tasks before it, use their max order + 1
-        // Otherwise use index + 1
-        let newOrder = 1;
-        if (droppedIndex === 0) {
-          // First task - order is 1
-          newOrder = 1;
-        } else {
-          // Look at the task before it to determine order
-          const previousTask = allTasksInColumn[droppedIndex - 1];
-          const previousOrder = parseInt(previousTask.dataset.order || '0', 10);
-          if (previousOrder > 0) {
-            // Use previous order + 1
-            newOrder = previousOrder + 1;
-          } else {
-            // Previous task doesn't have order, use index + 1
-            newOrder = droppedIndex + 1;
-          }
-        }
-
-        // Update order and status if changed
-        if (newStatus !== currentStatus) {
-          vscode.postMessage({
-            command: 'updateTaskOrder',
-            taskId: taskId,
-            order: newOrder,
-            newStatus: newStatus
-          });
-        } else {
-          // Same column, just reordering
-          vscode.postMessage({
-            command: 'updateTaskOrder',
-            taskId: taskId,
-            order: newOrder
-          });
-        }
-
-        // Re-store original order after task moves
-        setTimeout(() => storeOriginalOrder(), 100);
-
-        // Remove drag-over class
-        column.classList.remove('drag-over');
-      }
-    });
-
-    // Show PRD preview
-    function showPRDPreview(prdPath) {
-      const board = document.getElementById('kanbanBoard');
-      const panel = document.getElementById('prdPanel');
-      const content = document.getElementById('prdContent');
-
-      if (!board || !panel) return;
-
-      // Add with-prd class to board
-      board.classList.add('with-prd');
-
-      // Show PRD panel with animation
-      panel.style.display = 'flex';
-      panel.style.visibility = 'visible';
-      // Use requestAnimationFrame to ensure display is applied before setting data attribute
-      requestAnimationFrame(() => {
-        panel.setAttribute('data-visible', 'true');
-      });
-
-      // Get the selected card to find the task file path and track for Claude execution
-      const selectedCard = document.querySelector('.task-card.selected');
-      const taskFilePath = selectedCard ? selectedCard.dataset.filepath : undefined;
-      currentPrdTaskId = selectedCard ? selectedCard.dataset.taskId : null;
-
-      // Show/hide the Execute button based on whether we have a task
-      const playBtn = document.getElementById('playPrdBtn');
-      if (playBtn) {
-        playBtn.style.display = currentPrdTaskId ? 'inline-block' : 'none';
-      }
-
-      // Load PRD content with task file path for accurate resolution
-      vscode.postMessage({
-        command: 'loadPRD',
-        prdPath: prdPath,
-        taskFilePath: taskFilePath
-      });
-    }
-
-    // Close PRD preview
-    function closePRD() {
-      const board = document.getElementById('kanbanBoard');
-      const panel = document.getElementById('prdPanel');
-      const content = document.getElementById('prdContent');
-
-      if (!board || !panel) return;
-
-      // Remove with-prd class from board
-      board.classList.remove('with-prd');
-
-      // Hide PRD panel with animation
-      panel.setAttribute('data-visible', 'false');
-      // Wait for animation to complete before hiding
-      setTimeout(() => {
-        panel.style.display = 'none';
-        panel.style.visibility = 'hidden';
-      }, 300);
-
-      // Clear selection
-      document.querySelectorAll('.task-card').forEach(c => c.classList.remove('selected'));
-
-      // Reset content
-      if (content) {
-        content.innerHTML = '<div class="prd-placeholder">Select a task to view its PRD</div>';
-      }
-    }
-
-    // Refresh handler
-    function refresh() {
-      vscode.postMessage({ command: 'refresh' });
-    }
-
-    // Create task handler
-    function createTask() {
-      vscode.postMessage({ command: 'createTask' });
-    }
-
-    // ============ Batch Execution Functions ============
-    let isBatchRunning = false;
-    let batchProgress = { current: 0, total: 0, completed: 0, skipped: 0 };
-
-    function toggleBatchExecution() {
-      if (isBatchRunning) {
-        cancelBatchExecution();
-      } else {
-        startBatchExecution();
-      }
-    }
-
-    function startBatchExecution() {
-      // Get all task IDs from "To Do" column
-      const toDoColumn = document.querySelector('.column[data-status="To Do"]');
-      if (!toDoColumn) return;
-
-      const tasks = Array.from(toDoColumn.querySelectorAll('.task-card'));
-      if (tasks.length === 0) {
-        alert('No tasks in To Do column');
-        return;
-      }
-
-      // Sort tasks by order (ascending), then by priority
-      tasks.sort((a, b) => {
-        const orderA = parseInt(a.dataset.order || '999999', 10);
-        const orderB = parseInt(b.dataset.order || '999999', 10);
-        
-        // If both have order, sort by order
-        if (orderA !== 999999 && orderB !== 999999) {
-          if (orderA !== orderB) {
-            return orderA - orderB;
-          }
-        } else if (orderA !== 999999) {
-          // a has order, b doesn't - a comes first
-          return -1;
-        } else if (orderB !== 999999) {
-          // b has order, a doesn't - b comes first
-          return 1;
-        }
-        
-        // Neither has order or same order - fallback to priority
-        const priorityOrder = { high: 0, medium: 1, low: 2 };
-        const priorityA = a.classList.contains('high') ? 'high' : 
-                          a.classList.contains('medium') ? 'medium' : 'low';
-        const priorityB = b.classList.contains('high') ? 'high' : 
-                          b.classList.contains('medium') ? 'medium' : 'low';
-        return priorityOrder[priorityA] - priorityOrder[priorityB];
-      });
-
-      const taskIds = tasks.map(card => card.dataset.taskId);
-
-      vscode.postMessage({
-        command: 'startBatchExecution',
-        taskIds: taskIds
-      });
-    }
-
-    function cancelBatchExecution() {
-      vscode.postMessage({
-        command: 'cancelBatchExecution'
-      });
-    }
-
-    function updateBatchUI(isRunning) {
-      isBatchRunning = isRunning;
-
-      const playAllBtn = document.querySelector('.play-all-btn');
-      const progressBanner = document.getElementById('batchProgressBanner');
-
-      if (playAllBtn) {
-        playAllBtn.classList.toggle('running', isRunning);
-        playAllBtn.innerHTML = isRunning ? '⏹ Stop All' : '${Icons.play(12)} Play All';
-        playAllBtn.title = isRunning ? 'Cancel batch execution' : 'Execute all tasks via Claude CLI';
-      }
-
-      if (progressBanner) {
-        progressBanner.style.display = isRunning ? 'flex' : 'none';
-      }
-    }
-
-    function updateBatchProgress(current, total, completed, skipped) {
-      batchProgress = { current, total, completed, skipped };
-
-      const currentEl = document.getElementById('batchProgressCurrent');
-      const totalEl = document.getElementById('batchProgressTotal');
-      const completedEl = document.getElementById('batchCompleted');
-      const skippedEl = document.getElementById('batchSkipped');
-
-      if (currentEl) currentEl.textContent = current;
-      if (totalEl) totalEl.textContent = total;
-      if (completedEl) completedEl.textContent = completed;
-      if (skippedEl) skippedEl.textContent = skipped;
-    }
-    // ============ End Batch Execution Functions ============
-
-    // Open settings handler
-    function openSettings() {
-      closeSettingsPanel();
-      vscode.postMessage({ command: 'openSettings' });
-    }
-
-    // Settings panel toggle
-    function toggleSettingsPanel(event) {
-      event.stopPropagation();
-      const panel = document.getElementById('settingsPanel');
-      if (panel) {
-        panel.classList.toggle('open');
-      }
-    }
-
-    function closeSettingsPanel() {
-      const panel = document.getElementById('settingsPanel');
-      if (panel) {
-        panel.classList.remove('open');
-      }
-    }
-
-    // Stop propagation on settings panel to prevent closing
-    document.getElementById('settingsPanel').addEventListener('click', (e) => {
-      e.stopPropagation();
-    });
-
-    // Close settings panel when clicking outside
-    document.addEventListener('click', (e) => {
-      const settingsBtn = e.target.closest('.settings-dropdown > button');
-      if (settingsBtn) return; // Don't close when clicking the toggle button
-
-      const settingsPanel = document.getElementById('settingsPanel');
-      if (settingsPanel && !settingsPanel.contains(e.target)) {
-        closeSettingsPanel();
-      }
-    });
-
-    // Toggle column visibility instantly
-    function toggleColumn(columnName, isVisible) {
-      const column = document.querySelector(\`.column[data-status="\${columnName}"]\`);
-      if (column) {
-        if (isVisible) {
-          column.classList.remove('hidden');
-        } else {
-          column.classList.add('hidden');
-        }
-      }
-
-      // Save to VS Code settings in background (don't wait)
-      const enabledColumns = [];
-      document.querySelectorAll('.column-toggle input[type="checkbox"]').forEach(checkbox => {
-        if (checkbox.checked) {
-          enabledColumns.push(checkbox.dataset.column);
-        }
-      });
-      vscode.postMessage({
-        command: 'saveColumnSettings',
-        columns: enabledColumns
-      });
-    }
-
-    // Sort change handler
-    function onSortChange() {
-      const sortSelect = document.getElementById('sortSelect');
-      if (!(sortSelect instanceof HTMLSelectElement)) return;
-
-      currentSortMode = sortSelect.value;
-
-      switch (currentSortMode) {
-        case 'priority-asc':
-          sortTasksByPriority(true);
-          break;
-        case 'priority-desc':
-          sortTasksByPriority(false);
-          break;
-        case 'name-asc':
-          sortTasksByName(true);
-          break;
-        case 'name-desc':
-          sortTasksByName(false);
-          break;
-        case 'default':
-        default:
-          sortTasksByDefault();
-          break;
-      }
-    }
-
-    function sortTasksByPriority(ascending) {
-      const columns = document.querySelectorAll('.column');
-      const priorityOrder = { high: 0, medium: 1, low: 2 };
-
-      columns.forEach(column => {
-        const content = column.querySelector('.column-content');
-        if (!content) return;
-
-        const tasks = Array.from(content.querySelectorAll('.task-card'));
-        const emptyState = content.querySelector('.empty-state');
-
-        if (tasks.length === 0) return;
-
-        // Sort tasks by priority
-        tasks.sort((a, b) => {
-          // Get priority from class list (cards have classes: high, medium, or low)
-          let aPriority = 'low';
-          let bPriority = 'low';
-
-          if (a.classList.contains('high')) {
-            aPriority = 'high';
-          } else if (a.classList.contains('medium')) {
-            aPriority = 'medium';
-          }
-
-          if (b.classList.contains('high')) {
-            bPriority = 'high';
-          } else if (b.classList.contains('medium')) {
-            bPriority = 'medium';
-          }
-
-          const diff = priorityOrder[aPriority] - priorityOrder[bPriority];
-          return ascending ? diff : -diff;
-        });
-
-        // Store empty state node if it exists (detach it first)
-        const emptyStateNode = emptyState ? emptyState.cloneNode(true) : null;
-
-        // Remove all child nodes
-        while (content.firstChild) {
-          content.removeChild(content.firstChild);
-        }
-
-        // Re-append sorted tasks
-        tasks.forEach(task => {
-          content.appendChild(task);
-        });
-
-        // Re-append empty state if it existed
-        if (emptyStateNode) {
-          content.appendChild(emptyStateNode);
-        }
-      });
-    }
-
-    function sortTasksByName(ascending) {
-      const columns = document.querySelectorAll('.column');
-
-      columns.forEach(column => {
-        const content = column.querySelector('.column-content');
-        if (!content) return;
-
-        const tasks = Array.from(content.querySelectorAll('.task-card'));
-        const emptyState = content.querySelector('.empty-state');
-
-        if (tasks.length === 0) return;
-
-        // Sort tasks by name (from data-label or task title)
-        tasks.sort((a, b) => {
-          const aLabel = a.dataset.label || a.querySelector('.task-title')?.textContent || '';
-          const bLabel = b.dataset.label || b.querySelector('.task-title')?.textContent || '';
-          const comparison = aLabel.localeCompare(bLabel, undefined, { sensitivity: 'base' });
-          return ascending ? comparison : -comparison;
-        });
-
-        // Store empty state node if it exists
-        const emptyStateNode = emptyState ? emptyState.cloneNode(true) : null;
-
-        // Remove all child nodes
-        while (content.firstChild) {
-          content.removeChild(content.firstChild);
-        }
-
-        // Re-append sorted tasks
-        tasks.forEach(task => {
-          content.appendChild(task);
-        });
-
-        // Re-append empty state if it existed
-        if (emptyStateNode) {
-          content.appendChild(emptyStateNode);
-        }
-      });
-    }
-
-    function sortTasksByDefault() {
-      // Restore original order from stored map
-      const columns = document.querySelectorAll('.column');
-
-      columns.forEach(column => {
-        const content = column.querySelector('.column-content');
-        if (!content) return;
-
-        const columnStatus = column.dataset.status;
-        const originalOrder = originalTaskOrder.get(columnStatus);
-
-        // Re-store order if not available (shouldn't happen, but just in case)
-        if (!originalOrder || originalOrder.length === 0) {
-          storeOriginalOrder();
-          const updatedOrder = originalTaskOrder.get(columnStatus);
-          if (!updatedOrder || updatedOrder.length === 0) {
-            return; // Still no order, skip this column
-          }
-          // Use the newly stored order
-          const tasks = Array.from(content.querySelectorAll('.task-card'));
-          if (tasks.length === 0) return;
-          tasks.sort((a, b) => {
-            const aId = a.dataset.taskId;
-            const bId = b.dataset.taskId;
-            const aIndex = updatedOrder.indexOf(aId);
-            const bIndex = updatedOrder.indexOf(bId);
-            return aIndex - bIndex;
-          });
-          const emptyState = content.querySelector('.empty-state');
-          const emptyStateNode = emptyState ? emptyState.cloneNode(true) : null;
-          while (content.firstChild) {
-            content.removeChild(content.firstChild);
-          }
-          tasks.forEach(task => content.appendChild(task));
-          if (emptyStateNode) content.appendChild(emptyStateNode);
-          return;
-        }
-
-        const tasks = Array.from(content.querySelectorAll('.task-card'));
-        const emptyState = content.querySelector('.empty-state');
-
-        if (tasks.length === 0) return;
-
-        // Sort tasks back to original order
-        tasks.sort((a, b) => {
-          const aId = a.dataset.taskId;
-          const bId = b.dataset.taskId;
-          const aIndex = originalOrder.indexOf(aId);
-          const bIndex = originalOrder.indexOf(bId);
-          return aIndex - bIndex;
-        });
-
-        // Store empty state node if it exists
-        const emptyStateNode = emptyState ? emptyState.cloneNode(true) : null;
-
-        // Remove all child nodes
-        while (content.firstChild) {
-          content.removeChild(content.firstChild);
-        }
-
-        // Re-append tasks in original order
-        tasks.forEach(task => {
-          content.appendChild(task);
-        });
-
-        // Re-append empty state if it existed
-        if (emptyStateNode) {
-          content.appendChild(emptyStateNode);
-        }
-      });
-    }
-
-    // Store original task order (call after DOM is ready)
-    function storeOriginalOrder() {
-      const columns = document.querySelectorAll('.column');
-      originalTaskOrder.clear(); // Clear old order
-      columns.forEach(column => {
-        const content = column.querySelector('.column-content');
-        if (!content) return;
-        const columnStatus = column.dataset.status;
-        const tasks = Array.from(content.querySelectorAll('.task-card'));
-        const taskIds = tasks.map(task => task.dataset.taskId);
-        if (taskIds.length > 0) {
-          originalTaskOrder.set(columnStatus, taskIds);
-        }
-      });
-    }
-
-    // Store original order when page loads (use DOMContentLoaded or setTimeout)
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', () => {
-        setTimeout(() => storeOriginalOrder(), 50);
-      });
-    } else {
-      setTimeout(() => storeOriginalOrder(), 50);
-    }
-
-    // Handle messages from extension
-    window.addEventListener('message', event => {
-      const message = event.data;
-      switch (message.command) {
-        case 'updatePRDContent': {
-          const panel = document.getElementById('prdPanel');
-          const board = document.getElementById('kanbanBoard');
-          const content = document.getElementById('prdContent');
-
-          if (panel && content) {
-            // Ensure panel is visible when content is updated
-            panel.style.display = 'flex';
-            panel.style.visibility = 'visible';
-            if (board) {
-              board.classList.add('with-prd');
-            }
-            requestAnimationFrame(() => {
-              panel.setAttribute('data-visible', 'true');
-            });
-            content.innerHTML = \`<div class="prd-markdown">\${message.content}</div>\`;
-          }
-          break;
-        }
-
-        case 'availableProviders': {
-          availableProviders = message.providers || [];
-          const select = document.getElementById('providerSelect');
-          const warning = document.getElementById('noProvidersWarning');
-          const selectGroup = document.getElementById('providerSelectGroup');
-
-          if (availableProviders.length === 0) {
-            warning.style.display = 'block';
-            selectGroup.style.display = 'none';
-          } else {
-            warning.style.display = 'none';
-            selectGroup.style.display = 'block';
-            select.innerHTML = '<option value="">Select a provider...</option>' +
-              availableProviders.map(p =>
-                \`<option value="\${p.type}">\${p.name}\${p.enabled ? '' : ' (not configured)'}</option>\`
-              ).join('');
-          }
-          break;
-        }
-
-        case 'updateModelsForProvider': {
-          availableModels = message.models || [];
-          const select = document.getElementById('modelSelect');
-          const sendBtn = document.getElementById('sendToAgentBtn');
-
-          if (availableModels.length === 0) {
-            select.innerHTML = '<option value="">No models available</option>';
-            sendBtn.disabled = true;
-          } else {
-            select.innerHTML = availableModels.map(m =>
-              \`<option value="\${m.id}">\${m.name} ($\${m.inputPrice}/M in, $\${m.outputPrice}/M out)</option>\`
-            ).join('');
-            select.onchange = onModelChange;
-            // Auto-select first model
-            if (availableModels.length > 0) {
-              select.value = availableModels[0].id;
-              sendBtn.disabled = false;
-            }
-          }
-          break;
-        }
-
-        case 'agentSendSuccess': {
-          hideAgentModal();
-          // Refresh to show updated task status
-          refresh();
-          break;
-        }
-
-        case 'agentSendError': {
-          const btn = document.getElementById('sendToAgentBtn');
-          btn.disabled = false;
-          btn.textContent = 'Send to Agent';
-          alert('Error: ' + (message.error || 'Failed to send to agent'));
-          break;
-        }
-
-        case 'agentStatusUpdate': {
-          // Update task card with new agent status
-          const card = document.querySelector(\`[data-task-id="\${message.taskId}"]\`);
-          if (card) {
-            // Remove old status classes
-            card.classList.remove('agent-pending', 'agent-running', 'agent-completed', 'agent-error');
-            // Add new status class
-            card.classList.add(\`agent-\${message.status}\`);
-          }
-          break;
-        }
-
-        case 'ralphCommandExecuted': {
-          hideAgentModal();
-          // Command executed successfully, modal already closed
-          break;
-        }
-
-        case 'ralphCommandError': {
-          const btn = document.getElementById('sendToAgentBtn');
-          btn.disabled = false;
-          btn.textContent = 'Execute with Ralph';
-          alert('Error: ' + (message.error || 'Failed to execute ralph command'));
-          break;
-        }
-
-        case 'claudeExecutionStarted': {
-          runningTasks.add(message.taskId);
-          updateTaskRunningState(message.taskId, true);
-          break;
-        }
-
-        case 'claudeExecutionStopped': {
-          runningTasks.delete(message.taskId);
-          updateTaskRunningState(message.taskId, false);
-          break;
-        }
-
-        case 'claudeExecutionError': {
-          runningTasks.delete(message.taskId);
-          updateTaskRunningState(message.taskId, false);
-          alert('Claude execution failed: ' + (message.error || 'Unknown error'));
-          break;
-        }
-
-        // Rate limit message handlers
-        case 'rateLimitCountdownStart': {
-          startRateLimitCountdown(message.taskId, message.waitSeconds);
-          break;
-        }
-
-        case 'rateLimitRetrying': {
-          clearRateLimitUI();
-          runningTasks.add(message.taskId);
-          updateTaskRunningState(message.taskId, true);
-          break;
-        }
-
-        // ============ Batch Execution Message Handlers ============
-        case 'batchExecutionStarted': {
-          updateBatchUI(true);
-          updateBatchProgress(0, message.total, 0, 0);
-          break;
-        }
-
-        case 'batchTaskStarted': {
-          // Highlight the current task being executed
-          const card = document.querySelector(\`[data-task-id="\${message.taskId}"]\`);
-          if (card) {
-            card.classList.add('running');
-          }
-          updateBatchProgress(message.index + 1, message.total, batchProgress.completed, batchProgress.skipped);
-          break;
-        }
-
-        case 'batchTaskCompleted': {
-          // Remove running state from task
-          const taskCard = document.querySelector(\`[data-task-id="\${message.taskId}"]\`);
-          if (taskCard) {
-            taskCard.classList.remove('running');
-          }
-
-          if (message.success) {
-            batchProgress.completed++;
-          } else {
-            batchProgress.skipped++;
-          }
-          updateBatchProgress(batchProgress.current, batchProgress.total, batchProgress.completed, batchProgress.skipped);
-          break;
-        }
-
-        case 'batchExecutionProgress': {
-          updateBatchProgress(message.current, message.total, message.completed, message.skipped);
-          break;
-        }
-
-        case 'batchExecutionComplete': {
-          updateBatchUI(false);
-          alert(\`Batch complete!\\n\\nCompleted: \${message.completed}\\nSkipped: \${message.skipped}\`);
-          refresh(); // Refresh to update task positions
-          break;
-        }
-
-        case 'batchExecutionCancelled': {
-          updateBatchUI(false);
-          alert(\`Batch cancelled.\\n\\nCompleted: \${message.completed}\\nRemaining: \${message.total - message.current}\`);
-          refresh();
-          break;
-        }
-        // ============ End Batch Execution Message Handlers ============
-      }
-    });
-  </script>
 
   <!-- Batch Progress Banner -->
   <div class="batch-progress-banner" id="batchProgressBanner" style="display: none;">
@@ -3817,6 +1726,7 @@ ${allColumns
       <button class="cancel-btn" onclick="cancelRateLimitWait()">Cancel</button>
     </div>
   </div>
+  <script src="${scriptUri}"></script>
 </body>
 </html>`;
   }

@@ -14,6 +14,8 @@ An AI-powered Kanban board for visualizing markdown tasks from `.agent/TASKS/` d
 - **PRD Preview**: View Product Requirements Documents inline
 - **Multi-Workspace Support**: Aggregates tasks from all workspace folders
 - **Smart Parsing**: Reads Kanban markdown format with metadata
+- **Task Ordering**: Drag & drop to reorder tasks within columns - order is persisted to task files
+- **Smart Sorting**: Tasks sorted by custom order first, then by priority (High → Medium → Low)
 - **Click to Preview**: Click any card to preview PRD (no file opening)
 - **Double-click to Open**: Double-click to open the task file for editing
 - **Priority Badges**: Visual indicators for High/Medium/Low priority
@@ -35,6 +37,7 @@ The extension reads task files in this format:
 **Type:** Feature
 **Status:** Backlog
 **Priority:** High
+**Order:** 1
 **Created:** 2025-10-19
 **Updated:** 2025-10-19
 **PRD:** [Link](../PRDS/file.md)
@@ -91,6 +94,7 @@ Create a new file in `.agent/TASKS/` (e.g., `my-first-task.md`) with this templa
 **Type:** Feature
 **Status:** Backlog
 **Priority:** Medium
+**Order:** 1
 **Created:** 2025-01-15
 **Updated:** 2025-01-15
 **PRD:** [Link](../PRDS/my-first-task-prd.md)
@@ -113,6 +117,7 @@ Add any additional details, acceptance criteria, or notes here.
 **Optional Fields:**
 - `Description`: Brief task description
 - `PRD`: Link to PRD file (relative path from task file)
+- `Order`: Numeric value for custom task ordering within each column (automatically set when dragging tasks)
 
 ### Step 3: Create Your First PRD (Optional)
 
@@ -261,7 +266,9 @@ The command includes:
 
 ### Quick Tips
 
-- **Drag & Drop**: Move tasks between columns to update their status
+- **Drag & Drop**: Move tasks between columns to update their status, or within the same column to reorder them
+- **Task Ordering**: Tasks are automatically ordered within each column - drag tasks to set custom order (stored as `Order` field)
+- **Sorting**: Tasks without an order field are sorted by priority (High → Medium → Low)
 - **Click Card**: Preview the PRD (if linked)
 - **Double-click Card**: Open the task file for editing
 - **Refresh**: Click the Refresh button to reload tasks
@@ -282,6 +289,43 @@ The command includes:
 
 - Click any task card to preview PRD
 - Double-click any task card to open the task file for editing
+
+### Task Ordering
+
+Kaiban Board supports custom task ordering within each column. This feature allows you to prioritize tasks visually and persist that order.
+
+#### How It Works
+
+1. **Drag & Drop**: Simply drag any task card to a new position within the same column
+2. **Order Persistence**: The new order is automatically saved to the task file as an `Order` field
+3. **Automatic Sorting**: Tasks are displayed in this order:
+   - First: Tasks with an `Order` field (sorted ascending: 1, 2, 3...)
+   - Then: Tasks without an `Order` field (sorted by priority: High → Medium → Low)
+   - Within same order: Falls back to priority sorting
+
+#### Order Field Format
+
+When you drag a task, the extension automatically adds or updates an `Order` field in the task file:
+
+```markdown
+**Order:** 1
+```
+
+The order field is inserted after the `Priority` field in the task metadata. Each column maintains its own independent ordering.
+
+#### Example
+
+If you have three tasks in the "To Do" column:
+- Task A (High priority, no order)
+- Task B (Medium priority, Order: 1)
+- Task C (Low priority, Order: 2)
+
+The display order will be:
+1. Task B (has order 1)
+2. Task C (has order 2)
+3. Task A (no order, sorted by priority: High comes last after ordered tasks)
+
+**Note**: Tasks with order values always appear before tasks without order values, regardless of priority.
 
 ### Create PRD or Task from Cursor Chat
 
@@ -359,6 +403,7 @@ Each task file in `.agent/TASKS/` should follow this format:
 **Type:** Feature|Bug|Enhancement|Research
 **Status:** Backlog|To Do|Testing|Done
 **Priority:** High|Medium|Low
+**Order:** 1
 **Created:** 2025-01-01
 **Updated:** 2025-01-01
 **PRD:** [Link](../PRDS/your-prd-file.md)
