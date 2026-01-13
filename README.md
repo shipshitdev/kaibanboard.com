@@ -5,7 +5,7 @@
 <h1 align="center">Kaiban Board</h1>
 
 <p align="center">
-  <strong>AI-powered Kanban board for markdown tasks</strong>
+  <strong>Kanban board for Claude CLI task management</strong>
 </p>
 
 <p align="center">
@@ -43,9 +43,9 @@
 
 ## Why Kaiban Board?
 
-**Kaiban Board** transforms your markdown task files into a visual kanban board directly inside VS Code/Cursor. No more context switching between your editor and external project management tools.
+**Kaiban Board** transforms your markdown task files into a visual kanban board directly inside Cursor IDE. Execute tasks with Claude CLI right from your board.
 
-- **Works with AI agents** - Compatible with Claude, Cursor, and other AI coding assistants
+- **Claude CLI Integration** - Execute tasks directly via Claude Code from the board
 - **Markdown-based** - Tasks are simple `.md` files you own and version control
 - **Zero lock-in** - Your tasks are just files in your repo, not locked in a database
 
@@ -53,13 +53,14 @@
 
 | Feature | Description |
 |---------|-------------|
-| **4-Column Board** | To Do, Doing, Testing, Done - fully customizable |
+| **6-Column Board** | Backlog, To Do, Doing, Testing, Done, Blocked - fully customizable |
 | **PRD Preview** | View Product Requirements Documents inline |
 | **Multi-Workspace** | Aggregates tasks from all workspace folders |
 | **Drag & Drop** | Reorder tasks within columns, order persists to files |
 | **Priority Sorting** | Smart sorting by custom order, then by priority |
-| **AI Execution** | Execute tasks with Cursor Cloud Agent or Ralph Loop |
-| **Theme Support** | Adapts to VS Code's dark/light theme |
+| **Claude CLI Execution** | Execute tasks with Claude Code directly from the board |
+| **Ralph Loop Support** | Optional integration with ralph-loop plugin for iterative execution |
+| **Theme Support** | Adapts to Cursor's dark/light theme |
 | **Real-time Refresh** | Board updates when task files change |
 
 ## Installation
@@ -141,30 +142,29 @@ Add any additional details here.
 | **Click card** | Preview PRD in sidebar |
 | **Double-click card** | Open task file for editing |
 | **Drag card** | Move between columns or reorder |
-| **Click ▶ button** | Execute task with AI agent |
+| **Click ▶ button** | Execute task via Claude CLI |
+| **Click ⏱ button** | Set rate limit timer (pause before retry) |
 | **Click ⟳ button** | Refresh board |
 
 ### Task Execution
 
-#### Cursor Cloud Agent
+Tasks are executed via Claude CLI directly from the board.
 
-Requires Cursor IDE and API key:
+#### Basic Execution
 
-1. Get API key from [Cursor Settings](https://cursor.com/settings/api-keys)
-2. Run `Kaiban: Set API Key` and select "Cursor Cloud"
-3. Click ▶ on any task to execute
+1. Click ▶ on any task in To Do, Doing, or Testing
+2. A new terminal opens with Claude Code
+3. Claude reads the task file and implements it
+4. Task status automatically updates when complete
 
-The agent will create a branch, implement the task, and open a PR.
+#### With Ralph Loop (Optional)
 
-#### Ralph Loop (Claude Code)
+For iterative execution with automatic validation:
 
-Requires Claude Code with ralph-wiggum plugin:
-
-1. Install plugin: `/plugin install ralph-wiggum` in Claude Code
-2. Click ▶ on any task
-3. Select "Execute with Ralph Loop"
-
-Claude will work iteratively until the task is complete.
+1. Enable in settings: `kaiban.claude.useRalphLoop: true`
+2. Install the ralph-loop plugin in Claude Code
+3. Click ▶ on any task
+4. Claude will work iteratively until the completion promise is met
 
 ## Project Structure
 
@@ -209,18 +209,20 @@ See [DEVELOPMENT.md](./DEVELOPMENT.md) for complete development guide.
 | `kaiban.columns.enabled` | `["To Do", "Doing", "Testing", "Done"]` | Columns to display |
 | `kaiban.task.basePath` | `.agent/TASKS` | Task files location |
 | `kaiban.prd.basePath` | `.agent/PRDS` | PRD files location |
-| `kaiban.ai.defaultProvider` | `openrouter` | Default AI provider |
+| `kaiban.claude.executablePath` | `claude` | Path to Claude CLI |
 | `kaiban.claude.useRalphLoop` | `false` | Use Ralph Loop plugin |
+| `kaiban.claude.promptTemplate` | `Read the task file at {taskFile}...` | Prompt template |
+| `kaiban.claude.executionTimeout` | `30` | Max execution time (minutes) |
 
 ## Requirements
 
-- VS Code 1.105.0+ (or Cursor)
+- **Cursor IDE** (required) - This extension only works in Cursor
+- **Claude Code CLI** - For task execution
 - Workspace with `.agent/TASKS/` directory
 
 ### Optional
 
-- **Ralph Loop**: Claude Code + `ralph-wiggum` plugin
-- **Cursor Cloud**: Cursor IDE + API key
+- **Ralph Loop Plugin**: For iterative task execution
 
 ## License
 

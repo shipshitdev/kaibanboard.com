@@ -4,37 +4,14 @@ import * as vscode from "vscode";
 // Create mock functions at module level
 const mockShow = vi.fn();
 const mockRefresh = vi.fn();
+const mockDispose = vi.fn();
 
 // Mock the KanbanViewProvider before importing extension
 vi.mock("./kanbanView", () => ({
   KanbanViewProvider: class {
     show = mockShow;
     refresh = mockRefresh;
-  },
-}));
-
-const mockGetApiKey = vi.fn().mockResolvedValue(undefined);
-const mockHasApiKey = vi.fn().mockResolvedValue(false);
-const mockSetApiKey = vi.fn().mockResolvedValue(undefined);
-const mockDeleteApiKey = vi.fn().mockResolvedValue(undefined);
-const mockGetAllConfiguredProviders = vi.fn().mockResolvedValue([]);
-const mockGetProviderInfo = vi.fn().mockReturnValue({
-  name: "Test Provider",
-  keyUrl: "https://example.com",
-  placeholder: "test-key",
-});
-const mockValidateKeyFormat = vi.fn().mockReturnValue({ valid: true });
-
-// Mock the ApiKeyManager before importing extension
-vi.mock("./config/apiKeyManager", () => ({
-  ApiKeyManager: class {
-    getApiKey = mockGetApiKey;
-    hasApiKey = mockHasApiKey;
-    setApiKey = mockSetApiKey;
-    deleteApiKey = mockDeleteApiKey;
-    getAllConfiguredProviders = mockGetAllConfiguredProviders;
-    getProviderInfo = mockGetProviderInfo;
-    validateKeyFormat = mockValidateKeyFormat;
+    dispose = mockDispose;
   },
 }));
 
@@ -60,17 +37,7 @@ describe("extension", () => {
     consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     mockShow.mockClear().mockResolvedValue(undefined);
     mockRefresh.mockClear().mockResolvedValue(undefined);
-    mockGetApiKey.mockClear().mockResolvedValue(undefined);
-    mockHasApiKey.mockClear().mockResolvedValue(false);
-    mockSetApiKey.mockClear().mockResolvedValue(undefined);
-    mockDeleteApiKey.mockClear().mockResolvedValue(undefined);
-    mockGetAllConfiguredProviders.mockClear().mockResolvedValue([]);
-    mockGetProviderInfo.mockClear().mockReturnValue({
-      name: "Test Provider",
-      keyUrl: "https://example.com",
-      placeholder: "test-key",
-    });
-    mockValidateKeyFormat.mockClear().mockReturnValue({ valid: true });
+    mockDispose.mockClear();
     // Re-mock showInformationMessage to return a Promise
     (vscode.window.showInformationMessage as Mock).mockResolvedValue(undefined);
     (vscode.window.showErrorMessage as Mock).mockResolvedValue(undefined);
@@ -90,7 +57,7 @@ describe("extension", () => {
   describe("activate", () => {
     it("should log activation message", () => {
       activate(mockContext);
-      expect(consoleSpy).toHaveBeenCalledWith("Kaiban Markdown extension activated");
+      expect(consoleSpy).toHaveBeenCalledWith("Kaiban Board extension activated");
     });
 
     it("should abort activation when not running in Cursor", async () => {
@@ -138,16 +105,40 @@ describe("extension", () => {
       );
     });
 
+    it("should register kaiban.configure command", () => {
+      activate(mockContext);
+      expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
+        "kaiban.configure",
+        expect.any(Function)
+      );
+    });
+
+    it("should register kaiban.createPRD command", () => {
+      activate(mockContext);
+      expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
+        "kaiban.createPRD",
+        expect.any(Function)
+      );
+    });
+
+    it("should register kaiban.createTask command", () => {
+      activate(mockContext);
+      expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
+        "kaiban.createTask",
+        expect.any(Function)
+      );
+    });
+
     it("should add commands to subscriptions", () => {
       activate(mockContext);
-      // 8 commands: showBoard, refreshBoard, configureProviders, setApiKey, clearApiKey, configurePRDPath, createPRD, createTask
-      expect(mockContext.subscriptions.length).toBe(8);
+      // 5 commands: showBoard, refreshBoard, configure, createPRD, createTask
+      expect(mockContext.subscriptions.length).toBe(5);
     });
 
     it("should show welcome message with Open Board option", () => {
       activate(mockContext);
       expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
-        'Kaiban Markdown is ready! Use "Kaiban: Show Markdown Board" command to open.',
+        'Kaiban Board is ready! Use "Kaiban: Show Board" command to open.',
         "Open Board"
       );
     });
@@ -245,237 +236,18 @@ describe("extension", () => {
       });
     });
 
-    describe("configureProviders command handler", () => {
-      it("should open provider selection and execute setApiKey", async () => {
-        activate(mockContext);
-        mockHasApiKey.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
-        (vscode.window.showQuickPick as Mock).mockResolvedValue({
-          label: "Test Provider",
-          provider: "openai",
-        });
-
-        const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
-          (call) => call[0] === "kaiban.configureProviders"
-        );
-        const handler = registerCommandCall[1];
-
-        await handler();
-
-        expect(vscode.commands.executeCommand).toHaveBeenCalledWith("kaiban.setApiKey", "openai");
-      });
-
-      it("should not execute setApiKey when selection is canceled", async () => {
-        activate(mockContext);
-        mockHasApiKey.mockResolvedValue(false);
-        (vscode.window.showQuickPick as Mock).mockResolvedValue(undefined);
-
-        const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
-          (call) => call[0] === "kaiban.configureProviders"
-        );
-        const handler = registerCommandCall[1];
-
-        await handler();
-
-        expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
-      });
-    });
-
-    describe("setApiKey command handler", () => {
-      it("should return early when no provider selected", async () => {
-        activate(mockContext);
-        (vscode.window.showQuickPick as Mock).mockResolvedValue(undefined);
-
-        const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
-          (call) => call[0] === "kaiban.setApiKey"
-        );
-        const handler = registerCommandCall[1];
-
-        await handler();
-
-        expect(vscode.window.showInputBox).not.toHaveBeenCalled();
-      });
-
-      it("should skip provider selection when provider is provided", async () => {
-        activate(mockContext);
-        (vscode.window.showInputBox as Mock).mockResolvedValue("sk-test");
-
-        const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
-          (call) => call[0] === "kaiban.setApiKey"
-        );
-        const handler = registerCommandCall[1];
-
-        await handler("openai");
-
-        expect(vscode.window.showQuickPick).not.toHaveBeenCalled();
-        expect(mockSetApiKey).toHaveBeenCalledWith("openai", "sk-test");
-      });
-
-      it("should save API key when input provided", async () => {
-        activate(mockContext);
-        (vscode.window.showQuickPick as Mock).mockResolvedValue({
-          label: "OpenAI",
-          provider: "openai",
-        });
-        (vscode.window.showInputBox as Mock).mockResolvedValue("sk-test");
-
-        const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
-          (call) => call[0] === "kaiban.setApiKey"
-        );
-        const handler = registerCommandCall[1];
-
-        await handler();
-
-        expect(mockSetApiKey).toHaveBeenCalledWith("openai", "sk-test");
-        expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
-          "Test Provider API key saved securely"
-        );
-      });
-
-      it("should validate API key input", async () => {
-        activate(mockContext);
-        (vscode.window.showQuickPick as Mock).mockResolvedValue({
-          label: "OpenAI",
-          provider: "openai",
-        });
-        (vscode.window.showInputBox as Mock).mockResolvedValue(undefined);
-        mockValidateKeyFormat
-          .mockReturnValueOnce({ valid: false, error: "Invalid" })
-          .mockReturnValueOnce({ valid: true });
-
-        const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
-          (call) => call[0] === "kaiban.setApiKey"
-        );
-        const handler = registerCommandCall[1];
-
-        await handler();
-
-        const validateInput = (vscode.window.showInputBox as Mock).mock.calls[0][0]
-          .validateInput as (value: string) => string | null;
-
-        expect(validateInput("bad")).toBe("Invalid");
-        expect(validateInput("good")).toBeNull();
-        expect(mockValidateKeyFormat).toHaveBeenCalledWith("openai", "bad");
-      });
-    });
-
-    describe("clearApiKey command handler", () => {
-      it("should show info when no API keys configured", async () => {
-        activate(mockContext);
-        mockHasApiKey.mockResolvedValue(false);
-
-        const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
-          (call) => call[0] === "kaiban.clearApiKey"
-        );
-        const handler = registerCommandCall[1];
-
-        await handler();
-
-        expect(vscode.window.showInformationMessage).toHaveBeenCalledWith("No API keys configured");
-      });
-
-      it("should do nothing when selection is canceled", async () => {
-        activate(mockContext);
-        mockHasApiKey.mockResolvedValue(true);
-        (vscode.window.showQuickPick as Mock).mockResolvedValue(undefined);
-
-        const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
-          (call) => call[0] === "kaiban.clearApiKey"
-        );
-        const handler = registerCommandCall[1];
-
-        await handler();
-
-        expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
-        expect(mockDeleteApiKey).not.toHaveBeenCalled();
-      });
-
-      it("should clear API key when confirmed", async () => {
-        activate(mockContext);
-        mockHasApiKey.mockResolvedValue(true);
-        (vscode.window.showQuickPick as Mock).mockResolvedValue({
-          label: "OpenAI",
-          provider: "openai",
-          hasKey: true,
-        });
-        (vscode.window.showWarningMessage as Mock).mockResolvedValue("Clear");
-
-        const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
-          (call) => call[0] === "kaiban.clearApiKey"
-        );
-        const handler = registerCommandCall[1];
-
-        await handler();
-
-        expect(mockDeleteApiKey).toHaveBeenCalledWith("openai");
-        expect(vscode.window.showInformationMessage).toHaveBeenCalledWith("OpenAI API key cleared");
-      });
-
-      it("should not clear API key when user cancels", async () => {
-        activate(mockContext);
-        mockHasApiKey.mockResolvedValue(true);
-        (vscode.window.showQuickPick as Mock).mockResolvedValue({
-          label: "OpenAI",
-          provider: "openai",
-          hasKey: true,
-        });
-        (vscode.window.showWarningMessage as Mock).mockResolvedValue(undefined);
-
-        const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
-          (call) => call[0] === "kaiban.clearApiKey"
-        );
-        const handler = registerCommandCall[1];
-
-        await handler();
-
-        expect(mockDeleteApiKey).not.toHaveBeenCalled();
-      });
-    });
-
-    describe("configurePRDPath command handler", () => {
+    describe("configure command handler", () => {
       it("should return when no config option selected", async () => {
         activate(mockContext);
         (vscode.window.showQuickPick as Mock).mockResolvedValue(undefined);
 
         const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
-          (call) => call[0] === "kaiban.configurePRDPath"
+          (call) => call[0] === "kaiban.configure"
         );
         const handler = registerCommandCall[1];
 
         await handler();
 
-        expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
-      });
-
-      it("should open provider configuration option", async () => {
-        activate(mockContext);
-        (vscode.window.showQuickPick as Mock).mockResolvedValue({
-          option: "apiKeys",
-        });
-
-        const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
-          (call) => call[0] === "kaiban.configurePRDPath"
-        );
-        const handler = registerCommandCall[1];
-
-        await handler();
-
-        expect(vscode.commands.executeCommand).toHaveBeenCalledWith("kaiban.configureProviders");
-      });
-
-      it("should ignore unknown configuration option", async () => {
-        activate(mockContext);
-        (vscode.window.showQuickPick as Mock).mockResolvedValue({
-          option: "other",
-        });
-
-        const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
-          (call) => call[0] === "kaiban.configurePRDPath"
-        );
-        const handler = registerCommandCall[1];
-
-        await handler();
-
-        expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
         expect(vscode.window.showInputBox).not.toHaveBeenCalled();
       });
 
@@ -490,6 +262,10 @@ describe("extension", () => {
           get: vi.fn().mockReturnValue(".agent/PRDS"),
           update: vi.fn(),
         } as unknown as vscode.WorkspaceConfiguration);
+        vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({
+          get: vi.fn().mockReturnValue(".agent/TASKS"),
+          update: vi.fn(),
+        } as unknown as vscode.WorkspaceConfiguration);
 
         (vscode.window.showQuickPick as Mock).mockResolvedValueOnce({
           option: "columns",
@@ -500,7 +276,7 @@ describe("extension", () => {
         ]);
 
         const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
-          (call) => call[0] === "kaiban.configurePRDPath"
+          (call) => call[0] === "kaiban.configure"
         );
         const handler = registerCommandCall[1];
 
@@ -527,6 +303,10 @@ describe("extension", () => {
           get: vi.fn().mockReturnValue(".agent/PRDS"),
           update: vi.fn(),
         } as unknown as vscode.WorkspaceConfiguration);
+        vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({
+          get: vi.fn().mockReturnValue(".agent/TASKS"),
+          update: vi.fn(),
+        } as unknown as vscode.WorkspaceConfiguration);
 
         (vscode.window.showQuickPick as Mock).mockResolvedValueOnce({
           option: "columns",
@@ -534,7 +314,7 @@ describe("extension", () => {
         (vscode.window.showQuickPick as Mock).mockResolvedValueOnce(undefined);
 
         const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
-          (call) => call[0] === "kaiban.configurePRDPath"
+          (call) => call[0] === "kaiban.configure"
         );
         const handler = registerCommandCall[1];
 
@@ -553,6 +333,10 @@ describe("extension", () => {
           get: vi.fn().mockReturnValue(".agent/PRDS"),
           update: vi.fn(),
         } as unknown as vscode.WorkspaceConfiguration);
+        vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({
+          get: vi.fn().mockReturnValue(".agent/TASKS"),
+          update: vi.fn(),
+        } as unknown as vscode.WorkspaceConfiguration);
 
         (vscode.window.showQuickPick as Mock).mockResolvedValueOnce({
           option: "columns",
@@ -560,7 +344,7 @@ describe("extension", () => {
         (vscode.window.showQuickPick as Mock).mockResolvedValueOnce([]);
 
         const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
-          (call) => call[0] === "kaiban.configurePRDPath"
+          (call) => call[0] === "kaiban.configure"
         );
         const handler = registerCommandCall[1];
 
@@ -582,6 +366,10 @@ describe("extension", () => {
           get: vi.fn().mockReturnValue(".agent/PRDS"),
           update: updateSpy,
         } as unknown as vscode.WorkspaceConfiguration);
+        vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({
+          get: vi.fn().mockReturnValue(".agent/TASKS"),
+          update: vi.fn(),
+        } as unknown as vscode.WorkspaceConfiguration);
 
         (vscode.window.showQuickPick as Mock).mockResolvedValueOnce({
           option: "prd",
@@ -589,7 +377,7 @@ describe("extension", () => {
         (vscode.window.showInputBox as Mock).mockResolvedValue("  docs/prds/  ");
 
         const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
-          (call) => call[0] === "kaiban.configurePRDPath"
+          (call) => call[0] === "kaiban.configure"
         );
         const handler = registerCommandCall[1];
 
@@ -623,6 +411,10 @@ describe("extension", () => {
           get: vi.fn().mockReturnValue(".agent/PRDS"),
           update: updateSpy,
         } as unknown as vscode.WorkspaceConfiguration);
+        vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({
+          get: vi.fn().mockReturnValue(".agent/TASKS"),
+          update: vi.fn(),
+        } as unknown as vscode.WorkspaceConfiguration);
 
         (vscode.window.showQuickPick as Mock).mockResolvedValueOnce({
           option: "prd",
@@ -630,7 +422,7 @@ describe("extension", () => {
         (vscode.window.showInputBox as Mock).mockResolvedValue(undefined);
 
         const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
-          (call) => call[0] === "kaiban.configurePRDPath"
+          (call) => call[0] === "kaiban.configure"
         );
         const handler = registerCommandCall[1];
 
@@ -643,8 +435,16 @@ describe("extension", () => {
 
   describe("deactivate", () => {
     it("should log deactivation message", () => {
+      // First activate to create the kanbanView
+      activate(mockContext);
       deactivate();
-      expect(consoleSpy).toHaveBeenCalledWith("Kaiban Markdown extension deactivated");
+      expect(consoleSpy).toHaveBeenCalledWith("Kaiban Board extension deactivated");
+    });
+
+    it("should dispose kanbanView when it exists", () => {
+      activate(mockContext);
+      deactivate();
+      expect(mockDispose).toHaveBeenCalled();
     });
   });
 });

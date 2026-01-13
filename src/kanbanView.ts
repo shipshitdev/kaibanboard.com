@@ -1,23 +1,21 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { CursorCloudAdapter } from "./adapters/cursorCloudAdapter";
-import { OpenAIAdapter } from "./adapters/openaiAdapter";
-import { OpenRouterAdapter } from "./adapters/openrouterAdapter";
-import { ReplicateAdapter } from "./adapters/replicateAdapter";
-import type { ApiKeyManager } from "./config/apiKeyManager";
-import { ProviderRegistry } from "./services/providerRegistry";
+import { ClaudeCodeQuotaService } from "./services/claudeCodeQuotaService";
 import { SkillService } from "./services/skillService";
 import { type Task, TaskParser } from "./taskParser";
-import type { ProviderType, TaskPrompt } from "./types/aiProvider";
+import type { QuotaDisplayData } from "./types/claudeQuota";
+import { formatResetTime, getQuotaStatus } from "./types/claudeQuota";
 import { Icons } from "./utils/lucideIcons";
 
 export class KanbanViewProvider {
   private panel: vscode.WebviewPanel | undefined;
   private taskParser: TaskParser;
-  private providerRegistry: ProviderRegistry;
   private skillService: SkillService;
+  private quotaService: ClaudeCodeQuotaService;
   private pollingIntervals: Map<string, NodeJS.Timeout> = new Map();
   private skipNextConfigRefresh = false;
+  private quotaRefreshInterval: NodeJS.Timeout | undefined;
+  private cachedQuotaData: QuotaDisplayData | null = null;
 
   // Batch execution state
   private batchExecutionQueue: string[] = [];
@@ -27,33 +25,10 @@ export class KanbanViewProvider {
   private batchCompletedCount = 0;
   private batchSkippedCount = 0;
 
-  constructor(
-    private context: vscode.ExtensionContext,
-    apiKeyManager?: ApiKeyManager
-  ) {
+  constructor(private context: vscode.ExtensionContext) {
     this.taskParser = new TaskParser();
     this.skillService = new SkillService();
-    // biome-ignore lint/style/noNonNullAssertion: apiKeyManager is checked before use
-    this.providerRegistry = new ProviderRegistry(apiKeyManager!);
-
-    // Register adapters
-    if (apiKeyManager) {
-      this.providerRegistry.registerAdapter(
-        new OpenRouterAdapter(() => apiKeyManager.getApiKey("openrouter"))
-      );
-
-      this.providerRegistry.registerAdapter(
-        new OpenAIAdapter(() => apiKeyManager.getApiKey("openai"))
-      );
-
-      this.providerRegistry.registerAdapter(
-        new CursorCloudAdapter(() => apiKeyManager.getApiKey("cursor"))
-      );
-
-      this.providerRegistry.registerAdapter(
-        new ReplicateAdapter(() => apiKeyManager.getApiKey("replicate"))
-      );
-    }
+    this.quotaService = new ClaudeCodeQuotaService();
 
     // Listen for configuration changes to auto-refresh board
     vscode.workspace.onDidChangeConfiguration(
@@ -71,6 +46,48 @@ export class KanbanViewProvider {
       null,
       this.context.subscriptions
     );
+  }
+
+  /**
+   * Dispose all resources held by this provider.
+   * Called when the extension is deactivated.
+   */
+  public dispose(): void {
+    // Clear quota refresh interval
+    if (this.quotaRefreshInterval) {
+      clearInterval(this.quotaRefreshInterval);
+      this.quotaRefreshInterval = undefined;
+    }
+
+    // Clear all polling intervals
+    for (const [, interval] of this.pollingIntervals) {
+      clearInterval(interval);
+    }
+    this.pollingIntervals.clear();
+
+    // Dispose all terminals
+    for (const [, terminal] of this.claudeTerminals) {
+      terminal.dispose();
+    }
+    this.claudeTerminals.clear();
+
+    // Dispose all file watchers
+    for (const [, watcher] of this.completionWatchers) {
+      watcher.dispose();
+    }
+    this.completionWatchers.clear();
+
+    // Clear completion pollers
+    for (const [, timeout] of this.completionPollers) {
+      clearTimeout(timeout);
+    }
+    this.completionPollers.clear();
+
+    // Dispose panel if exists
+    if (this.panel) {
+      this.panel.dispose();
+      this.panel = undefined;
+    }
   }
 
   public async show() {
@@ -126,18 +143,6 @@ export class KanbanViewProvider {
               message.stopExecution
             );
             break;
-          case "getAvailableProviders":
-            await this.handleGetAvailableProviders();
-            break;
-          case "getModelsForProvider":
-            await this.handleGetModelsForProvider(message.provider);
-            break;
-          case "prepareAgentPrompt":
-            await this.handlePrepareAgentPrompt(message.taskId);
-            break;
-          case "sendToAgent":
-            await this.handleSendToAgent(message.taskId, message.provider, message.model);
-            break;
           case "saveColumnSettings":
             await this.saveColumnSettings(message.columns);
             break;
@@ -159,6 +164,12 @@ export class KanbanViewProvider {
           case "editPRD":
             await this.handleEditPRD(message.prdPath);
             break;
+          case "getPrdRawContent":
+            await this.handleGetPrdRawContent(message.prdPath);
+            break;
+          case "savePrdContent":
+            await this.handleSavePrdContent(message.prdPath, message.content);
+            break;
           case "updateTask":
             await this.handleUpdateTask(message.taskId, message.updates);
             break;
@@ -168,6 +179,12 @@ export class KanbanViewProvider {
           case "cancelBatchExecution":
             await this.handleCancelBatchExecution();
             break;
+          case "getClaudeQuota":
+            await this.handleGetClaudeQuota();
+            break;
+          case "refreshClaudeQuota":
+            await this.handleRefreshClaudeQuota();
+            break;
         }
       },
       undefined,
@@ -175,6 +192,118 @@ export class KanbanViewProvider {
     );
 
     await this.refresh();
+
+    // Start quota auto-refresh (every 5 minutes)
+    this.startQuotaAutoRefresh();
+
+    // Initial quota fetch
+    await this.handleGetClaudeQuota();
+  }
+
+  /**
+   * Start auto-refresh for Claude quota (every 5 minutes)
+   */
+  private startQuotaAutoRefresh(): void {
+    // Clear existing interval if any
+    if (this.quotaRefreshInterval) {
+      clearInterval(this.quotaRefreshInterval);
+    }
+
+    // Refresh every 5 minutes (300000ms)
+    this.quotaRefreshInterval = setInterval(async () => {
+      await this.handleGetClaudeQuota();
+    }, 300000);
+  }
+
+  /**
+   * Handle get Claude quota request
+   */
+  private async handleGetClaudeQuota(): Promise<void> {
+    if (!this.panel) return;
+
+    // Send loading state
+    this.panel.webview.postMessage({
+      command: "claudeQuotaLoading",
+    });
+
+    try {
+      const quotaData = await this.quotaService.getQuota();
+      this.cachedQuotaData = quotaData;
+
+      this.panel.webview.postMessage({
+        command: "claudeQuotaUpdate",
+        data: this.serializeQuotaData(quotaData),
+      });
+    } catch (error) {
+      this.panel.webview.postMessage({
+        command: "claudeQuotaError",
+        error: String(error),
+      });
+    }
+  }
+
+  /**
+   * Handle manual refresh of Claude quota
+   */
+  private async handleRefreshClaudeQuota(): Promise<void> {
+    this.quotaService.clearCache();
+    await this.handleGetClaudeQuota();
+  }
+
+  /**
+   * Serialize quota data for webview (convert Dates to strings)
+   */
+  private serializeQuotaData(data: QuotaDisplayData): {
+    usage: {
+      fiveHour: { utilization: number; resetsAt: string; resetTimeFormatted: string; status: string };
+      sevenDay: { utilization: number; resetsAt: string; resetTimeFormatted: string; status: string };
+      sevenDaySonnet?: { utilization: number; resetsAt: string; resetTimeFormatted: string; status: string };
+      lastUpdated: string;
+    } | null;
+    error: string | null;
+    isLoading: boolean;
+    isMacOS: boolean;
+  } {
+    if (!data.usage) {
+      return {
+        usage: null,
+        error: data.error,
+        isLoading: data.isLoading,
+        isMacOS: data.isMacOS,
+      };
+    }
+
+    const result: ReturnType<typeof this.serializeQuotaData> = {
+      usage: {
+        fiveHour: {
+          utilization: data.usage.fiveHour.utilization,
+          resetsAt: data.usage.fiveHour.resetsAt.toISOString(),
+          resetTimeFormatted: formatResetTime(data.usage.fiveHour.resetsAt),
+          status: getQuotaStatus(data.usage.fiveHour.utilization),
+        },
+        sevenDay: {
+          utilization: data.usage.sevenDay.utilization,
+          resetsAt: data.usage.sevenDay.resetsAt.toISOString(),
+          resetTimeFormatted: formatResetTime(data.usage.sevenDay.resetsAt),
+          status: getQuotaStatus(data.usage.sevenDay.utilization),
+        },
+        lastUpdated: data.usage.lastUpdated.toISOString(),
+      },
+      error: data.error,
+      isLoading: data.isLoading,
+      isMacOS: data.isMacOS,
+    };
+
+    if (data.usage.sevenDaySonnet) {
+      result.usage!.sevenDaySonnet = {
+        utilization: data.usage.sevenDaySonnet.utilization,
+        resetsAt: data.usage.sevenDaySonnet.resetsAt.toISOString(),
+        resetTimeFormatted: formatResetTime(data.usage.sevenDaySonnet.resetsAt),
+        status: getQuotaStatus(data.usage.sevenDaySonnet.utilization),
+      };
+    }
+
+    return result;
   }
 
   public async refresh() {
@@ -185,12 +314,7 @@ export class KanbanViewProvider {
     const tasks = await this.taskParser.parseTasks();
     const groupedTasks = this.taskParser.groupByStatus(tasks);
 
-    // Check if any API keys are configured
-    const hasAnyApiKey = await this.providerRegistry
-      .getEnabledAdapters()
-      .then((adapters) => adapters.length > 0);
-
-    this.panel.webview.html = await this.getWebviewContent(groupedTasks, hasAnyApiKey);
+    this.panel.webview.html = await this.getWebviewContent(groupedTasks);
   }
 
   private async openTaskFile(filePath: string) {
@@ -448,6 +572,99 @@ export class KanbanViewProvider {
     }
   }
 
+  private async handleGetPrdRawContent(prdPath: string) {
+    if (!this.panel) return;
+
+    try {
+      const prdUri = this.resolvePrdPath(prdPath);
+      if (!prdUri) {
+        this.panel.webview.postMessage({
+          command: "prdRawContent",
+          content: "",
+          error: "Could not resolve PRD path",
+        });
+        return;
+      }
+
+      const content = await vscode.workspace.fs.readFile(prdUri);
+      this.panel.webview.postMessage({
+        command: "prdRawContent",
+        content: Buffer.from(content).toString("utf-8"),
+        prdPath: prdPath,
+      });
+    } catch (error) {
+      this.panel.webview.postMessage({
+        command: "prdRawContent",
+        content: "",
+        error: `Failed to read PRD: ${error}`,
+      });
+    }
+  }
+
+  private async handleSavePrdContent(prdPath: string, content: string) {
+    if (!this.panel) return;
+
+    try {
+      const prdUri = this.resolvePrdPath(prdPath);
+      if (!prdUri) {
+        this.panel.webview.postMessage({
+          command: "prdSaveResult",
+          success: false,
+          error: "Could not resolve PRD path",
+        });
+        return;
+      }
+
+      await vscode.workspace.fs.writeFile(prdUri, Buffer.from(content, "utf-8"));
+
+      // Re-render the PRD preview with updated content
+      const renderedContent = this.renderMarkdown(content);
+      this.panel.webview.postMessage({
+        command: "prdSaveResult",
+        success: true,
+        renderedContent: renderedContent,
+      });
+    } catch (error) {
+      this.panel.webview.postMessage({
+        command: "prdSaveResult",
+        success: false,
+        error: `Failed to save PRD: ${error}`,
+      });
+    }
+  }
+
+  private resolvePrdPath(prdPath: string): vscode.Uri | null {
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders) return null;
+
+    const config = vscode.workspace.getConfiguration("kaiban.prd");
+    const basePath = config.get<string>("basePath", ".agent/PRDS");
+    const basePathDir = path.basename(basePath);
+    let relativePrdPath = prdPath;
+
+    if (prdPath.includes(`${basePathDir}/`)) {
+      const index = prdPath.indexOf(`${basePathDir}/`);
+      relativePrdPath = prdPath.substring(index + basePathDir.length + 1);
+    } else if (prdPath.startsWith("../") || prdPath.startsWith("./")) {
+      const parts = prdPath.split("/");
+      let startIndex = 0;
+      for (let i = 0; i < parts.length; i++) {
+        if (parts[i] !== ".." && parts[i] !== "." && parts[i] !== "") {
+          startIndex = i;
+          break;
+        }
+      }
+      if (parts[startIndex] === basePathDir) {
+        relativePrdPath = parts.slice(startIndex + 1).join("/");
+      } else {
+        relativePrdPath = parts.slice(startIndex).join("/");
+      }
+    }
+
+    const baseUri = vscode.Uri.joinPath(workspaceFolders[0].uri, basePath);
+    return vscode.Uri.joinPath(baseUri, relativePrdPath);
+  }
+
   private generatePRDTemplate(title: string, description: string): string {
     const now = new Date().toISOString().split("T")[0];
     return `# PRD: ${title}
@@ -589,219 +806,6 @@ Implementation details and considerations.
     }
   }
 
-  // AI Provider handlers
-  private async handleGetAvailableProviders() {
-    if (!this.panel) return;
-
-    try {
-      const providers = await this.providerRegistry.getAvailableProviders();
-      this.panel.webview.postMessage({
-        command: "availableProviders",
-        providers,
-      });
-    } catch (error) {
-      this.panel.webview.postMessage({
-        command: "providerError",
-        error: String(error),
-      });
-    }
-  }
-
-  private async handleGetModelsForProvider(provider: ProviderType) {
-    if (!this.panel) return;
-
-    try {
-      const adapter = this.providerRegistry.getAdapter(provider);
-      if (!adapter) {
-        throw new Error(`Provider ${provider} not found`);
-      }
-
-      const models = await adapter.getAvailableModels();
-      this.panel.webview.postMessage({
-        command: "updateModelsForProvider",
-        provider,
-        models,
-      });
-    } catch (error) {
-      this.panel.webview.postMessage({
-        command: "updateModelsForProvider",
-        models: [],
-        error: String(error),
-      });
-    }
-  }
-
-  private async handlePrepareAgentPrompt(taskId: string) {
-    if (!this.panel) return;
-
-    try {
-      const tasks = await this.taskParser.parseTasks();
-      const task = tasks.find((t) => t.id === taskId);
-
-      if (!task) {
-        throw new Error(`Task ${taskId} not found`);
-      }
-
-      // Check if already claimed
-      if (task.claimedBy) {
-        throw new Error(`Task is already claimed by ${task.claimedBy}`);
-      }
-
-      // Load PRD content if available
-      let prdContent = "";
-      if (task.prdPath) {
-        prdContent = await this.loadPRDContentRaw(task.prdPath);
-      }
-
-      // Get available providers
-      const providers = await this.providerRegistry.getAvailableProviders();
-
-      this.panel.webview.postMessage({
-        command: "showAgentModal",
-        task: {
-          id: task.id,
-          label: task.label,
-          description: task.description,
-          type: task.type,
-          priority: task.priority,
-          prdContent,
-          rejectionHistory: task.agentNotes,
-          filePath: task.filePath,
-        },
-        providers,
-      });
-    } catch (error) {
-      vscode.window.showErrorMessage(`Error preparing agent: ${error}`);
-    }
-  }
-
-  private async handleSendToAgent(taskId: string, provider: ProviderType, model?: string) {
-    if (!this.panel) return;
-
-    try {
-      const tasks = await this.taskParser.parseTasks();
-      const task = tasks.find((t) => t.id === taskId);
-
-      if (!task) {
-        throw new Error(`Task ${taskId} not found`);
-      }
-
-      // Double-check not already claimed
-      if (task.claimedBy) {
-        throw new Error(`Task is already claimed by ${task.claimedBy}`);
-      }
-
-      const adapter = this.providerRegistry.getAdapter(provider);
-      if (!adapter) {
-        throw new Error(`Provider ${provider} not available`);
-      }
-
-      // Load PRD content
-      let prdContent = "";
-      if (task.prdPath) {
-        prdContent = await this.loadPRDContentRaw(task.prdPath);
-      }
-
-      const taskPrompt: TaskPrompt = {
-        title: task.label,
-        description: task.description,
-        type: task.type,
-        priority: task.priority,
-        prdContent,
-        rejectionHistory: task.agentNotes,
-        filePath: task.filePath,
-      };
-
-      // Send to agent
-      const response = await adapter.sendTask(taskPrompt, { model });
-
-      if (response.status === "error") {
-        this.panel.webview.postMessage({
-          command: "agentSendError",
-          taskId,
-          error: response.error,
-        });
-        return;
-      }
-
-      // Notify webview of success
-      this.panel.webview.postMessage({
-        command: "agentSendSuccess",
-        taskId,
-        agentId: response.id,
-        provider,
-        model,
-      });
-
-      vscode.window.showInformationMessage(
-        `Task sent to ${adapter.displayName}${response.branchName ? ` (Branch: ${response.branchName})` : ""}`
-      );
-
-      // If provider supports agent mode (like Cursor), start polling
-      if (adapter.supportsAgentMode && adapter.checkStatus && response.id) {
-        this.startAgentPolling(taskId, response.id, provider);
-      }
-
-      await this.refresh();
-    } catch (error) {
-      this.panel?.webview.postMessage({
-        command: "agentSendError",
-        taskId,
-        error: String(error),
-      });
-      vscode.window.showErrorMessage(`Failed to send to agent: ${error}`);
-    }
-  }
-
-  private startAgentPolling(taskId: string, agentId: string, provider: ProviderType) {
-    // Poll every 30 seconds
-    const interval = setInterval(async () => {
-      try {
-        const adapter = this.providerRegistry.getAdapter(provider);
-        if (!adapter?.checkStatus) {
-          this.stopAgentPolling(taskId);
-          return;
-        }
-
-        const status = await adapter.checkStatus(agentId);
-
-        if (status.status === "completed" || status.status === "error") {
-          this.stopAgentPolling(taskId);
-          await this.refresh();
-
-          if (status.status === "completed") {
-            const message = status.prUrl
-              ? `Agent completed! PR: ${status.prUrl}`
-              : "Agent completed the task!";
-
-            const action = status.prUrl ? "View PR" : undefined;
-            const selection = action
-              ? await vscode.window.showInformationMessage(message, action)
-              : await vscode.window.showInformationMessage(message);
-
-            if (selection === "View PR" && status.prUrl) {
-              vscode.env.openExternal(vscode.Uri.parse(status.prUrl));
-            }
-          } else {
-            vscode.window.showWarningMessage(`Agent encountered an error: ${status.error}`);
-          }
-        }
-      } catch (error) {
-        console.error("Error polling agent status:", error);
-      }
-    }, 30000);
-
-    this.pollingIntervals.set(taskId, interval);
-  }
-
-  private stopAgentPolling(taskId: string) {
-    const interval = this.pollingIntervals.get(taskId);
-    if (interval) {
-      clearInterval(interval);
-      this.pollingIntervals.delete(taskId);
-    }
-  }
-
   private async handleExecuteRalphCommand(taskId: string) {
     try {
       const tasks = await this.taskParser.parseTasks();
@@ -881,6 +885,26 @@ Implementation details and considerations.
         });
       }
     }
+  }
+
+  /**
+   * Get Claude execution configuration from workspace settings.
+   */
+  private getClaudeConfig() {
+    const config = vscode.workspace.getConfiguration("kaiban");
+    return {
+      claudePath: config.get<string>("claude.executablePath", "claude"),
+      additionalFlags: config.get<string>("claude.additionalFlags", ""),
+      useRalphLoop: config.get<boolean>("claude.useRalphLoop", false),
+      promptTemplate: config.get<string>(
+        "claude.promptTemplate",
+        "Read the task file at {taskFile} and implement it. The task contains a link to the PRD with full requirements. Update the task status to Testing when complete."
+      ),
+      ralphCommand: config.get<string>("ralph.command", "/ralph-loop:ralph-loop"),
+      maxIterations: config.get<number>("ralph.maxIterations", 5),
+      completionPromise: config.get<string>("ralph.completionPromise", "TASK COMPLETE"),
+      executionTimeout: config.get<number>("claude.executionTimeout", 30),
+    };
   }
 
   private claudeTerminals: Map<string, vscode.Terminal> = new Map();
@@ -1031,13 +1055,12 @@ Implementation details and considerations.
 
     this.completionPollers.set(taskId, pollInterval);
 
-    // Clean up after 30 minutes max
-    setTimeout(
-      () => {
-        this.cleanupTaskTracking(taskId);
-      },
-      30 * 60 * 1000
-    );
+    // Clean up after configured timeout (default 30 minutes)
+    const cfg = this.getClaudeConfig();
+    const timeoutMs = cfg.executionTimeout * 60 * 1000;
+    setTimeout(() => {
+      this.cleanupTaskTracking(taskId);
+    }, timeoutMs);
   }
 
   private cleanupTaskTracking(taskId: string, includeTerminal = false) {
@@ -1289,27 +1312,26 @@ Implementation details and considerations.
 
     this.completionPollers.set(taskId, pollInterval);
 
-    // Timeout after 30 minutes - skip task and continue
-    setTimeout(
-      () => {
-        if (this.completionWatchers.has(taskId) && this.isBatchExecuting) {
-          this.cleanupTaskTracking(taskId, true);
-          this.batchSkippedCount++;
+    // Timeout after configured time - skip task and continue
+    const cfg = this.getClaudeConfig();
+    const timeoutMs = cfg.executionTimeout * 60 * 1000;
+    setTimeout(() => {
+      if (this.completionWatchers.has(taskId) && this.isBatchExecuting) {
+        this.cleanupTaskTracking(taskId, true);
+        this.batchSkippedCount++;
 
-          if (this.panel) {
-            this.panel.webview.postMessage({
-              command: "batchTaskCompleted",
-              taskId,
-              success: false,
-            });
-          }
-
-          this.currentBatchIndex++;
-          this.executeNextBatchTask();
+        if (this.panel) {
+          this.panel.webview.postMessage({
+            command: "batchTaskCompleted",
+            taskId,
+            success: false,
+          });
         }
-      },
-      30 * 60 * 1000
-    );
+
+        this.currentBatchIndex++;
+        this.executeNextBatchTask();
+      }
+    }, timeoutMs);
   }
 
   private async handleCancelBatchExecution() {
@@ -1448,10 +1470,7 @@ Implementation details and considerations.
     return html;
   }
 
-  private async getWebviewContent(
-    groupedTasks: Record<string, Task[]>,
-    hasAnyApiKey: boolean = false
-  ): Promise<string> {
+  private async getWebviewContent(groupedTasks: Record<string, Task[]>): Promise<string> {
     // All possible columns
     const allColumns = ["Backlog", "To Do", "Doing", "Testing", "Done", "Blocked"];
 
@@ -1506,24 +1525,14 @@ Implementation details and considerations.
       const isInTesting = task.status === "Testing";
       const isInToDo = task.status === "To Do";
       const isInDoing = task.status === "Doing";
-      const hasAgent = task.claimedBy && task.claimedBy.length > 0;
-      const agentPlatform = hasAgent ? task.claimedBy.split("-")[0] : "";
       // Check if task is running via Claude terminal (but not if already Done)
       const isRunningViaClaude = runningTaskIds.has(task.id) && task.status !== "Done";
-      const canSendToAgent =
-        hasAnyApiKey &&
-        (isInToDo || isInDoing || isInTesting) &&
-        !hasAgent &&
-        task.agentStatus !== "running" &&
-        !isRunningViaClaude;
-      const isAgentRunning = task.agentStatus === "running" || isRunningViaClaude;
-      const agentStatusClass = task.agentStatus ? `agent-${task.agentStatus}` : "";
       const runningClass = isRunningViaClaude ? "running" : "";
       const canExecuteViaClaude =
-        (isInToDo || isInDoing || isInTesting) && !isAgentRunning && task.status !== "Done";
+        (isInToDo || isInDoing || isInTesting) && !isRunningViaClaude && task.status !== "Done";
 
       return `
-        <div class="task-card ${priorityClass} ${completedClass} ${agentStatusClass} ${runningClass}"
+        <div class="task-card ${priorityClass} ${completedClass} ${runningClass}"
              draggable="true"
              data-filepath="${task.filePath}"
              data-task-id="${task.id}"
@@ -1539,15 +1548,10 @@ Implementation details and considerations.
           <div class="task-meta">
             <span class="badge priority-${priorityClass}">${task.priority}</span>
             <span class="badge type">${task.type}</span>
-            ${hasAgent ? `<span class="badge agent-badge ${agentPlatform}">${Icons.bot(14)} ${agentPlatform}</span>` : ""}
-            ${task.agentProvider ? `<span class="badge provider-badge provider-${task.agentProvider}">${task.agentProvider}</span>` : ""}
             ${task.rejectionCount > 0 ? `<span class="badge rejection-badge">${Icons.rotateCcw(14)} ${task.rejectionCount}</span>` : ""}
           </div>
           <div class="task-footer">
             <span class="project-name">${this.escapeHtml(task.project)}</span>
-            <div class="task-actions">
-              ${canSendToAgent ? `<button class="agent-btn" onclick="event.stopPropagation(); showAgentModal('${task.id}')" title="Send to AI Agent">${Icons.play(16)}</button>` : ""}
-            </div>
           </div>
         </div>
       `;
@@ -1572,6 +1576,45 @@ Implementation details and considerations.
 <body>
     <div class="header">
       <div class="title">Kaiban Board</div>
+      <!-- Claude Quota Widget -->
+      <div class="quota-widget" id="quotaWidget">
+        <div class="quota-loading" id="quotaLoading">
+          ${Icons.refresh(14)} Loading...
+        </div>
+        <div class="quota-content" id="quotaContent" style="display: none;">
+          <!-- Primary bar (always visible) -->
+          <div class="quota-primary">
+            <span class="quota-label">5h</span>
+            <div class="quota-bar">
+              <div class="quota-bar-fill" id="quota5h" data-status="good"></div>
+            </div>
+            <span class="quota-value" id="quota5hValue">0%</span>
+          </div>
+          <!-- Expanded bars (visible on hover) -->
+          <div class="quota-expanded">
+            <div class="quota-bar-group" title="7-day weekly limit">
+              <span class="quota-label">7d</span>
+              <div class="quota-bar">
+                <div class="quota-bar-fill" id="quota7d" data-status="good"></div>
+              </div>
+              <span class="quota-value" id="quota7dValue">0%</span>
+            </div>
+            <div class="quota-bar-group quota-sonnet-group" id="quotaSonnetGroup" title="7-day Sonnet limit">
+              <span class="quota-label">S</span>
+              <div class="quota-bar">
+                <div class="quota-bar-fill" id="quotaSonnet" data-status="good"></div>
+              </div>
+              <span class="quota-value" id="quotaSonnetValue">0%</span>
+            </div>
+            <button class="quota-refresh-btn" onclick="refreshClaudeQuota()" title="Refresh quota">
+              ${Icons.refresh(12)}
+            </button>
+          </div>
+        </div>
+        <div class="quota-error" id="quotaError" style="display: none;">
+          <span class="quota-error-text" id="quotaErrorText"></span>
+        </div>
+      </div>
       ${
         !isEmpty
           ? `<div class="header-actions">
@@ -1579,7 +1622,8 @@ Implementation details and considerations.
           ${Icons.plus(16)}
         </button>
         <select class="action-btn secondary-btn" id="sortSelect" onchange="onSortChange()" title="Sort tasks">
-          <option value="default">Default</option>
+          <option value="order-asc">Order ↑</option>
+          <option value="order-desc">Order ↓</option>
           <option value="priority-asc">Priority ↑</option>
           <option value="priority-desc">Priority ↓</option>
           <option value="name-asc">Name A-Z</option>
@@ -1710,59 +1754,19 @@ ${allColumns
       <div class="prd-header">
         <span id="prdHeaderTitle">PRD Preview</span>
         <div class="prd-actions">
-          <button class="edit-task-btn" id="editTaskBtn" onclick="toggleEditMode()" title="Edit Task" style="display: none;">${Icons.edit(14)}</button>
-          <button class="edit-prd-btn" id="editPrdBtn" onclick="editPRD()" title="Edit PRD" style="display: none;">${Icons.edit(14)} Edit</button>
+          <!-- View mode buttons -->
+          <button class="edit-prd-btn" id="editPrdBtn" onclick="togglePrdEditMode()" title="Edit PRD" style="display: none;">${Icons.edit(14)} Edit</button>
           <button class="create-prd-btn" id="createPrdBtn" onclick="createPRD()" title="Create PRD" style="display: none;">${Icons.plus(14)} Create PRD</button>
           <button class="play-prd-btn" id="playPrdBtn" onclick="executePRD()" title="Execute via Claude CLI" style="display: none;">▶ Execute</button>
+          <!-- Edit mode buttons -->
+          <button class="edit-btn edit-btn-cancel" id="cancelPrdBtn" onclick="cancelPrdEdit()" style="display: none;">Cancel</button>
+          <button class="edit-btn edit-btn-save" id="savePrdBtn" onclick="savePrdEdit()" style="display: none;">Save</button>
           <button class="close-prd-btn" onclick="closePRD()" title="Close PRD Panel">×</button>
         </div>
       </div>
-      <!-- Task Edit Form (hidden by default) -->
-      <div class="task-edit-form" id="taskEditForm" style="display: none;">
-        <div class="edit-form-group">
-          <label for="editTaskLabel">Title</label>
-          <input type="text" id="editTaskLabel" class="edit-input" placeholder="Task title" />
-        </div>
-        <div class="edit-form-group">
-          <label for="editTaskDescription">Description</label>
-          <textarea id="editTaskDescription" class="edit-textarea" placeholder="Task description" rows="3"></textarea>
-        </div>
-        <div class="edit-form-row">
-          <div class="edit-form-group">
-            <label for="editTaskPriority">Priority</label>
-            <select id="editTaskPriority" class="edit-select">
-              <option value="High">High</option>
-              <option value="Medium">Medium</option>
-              <option value="Low">Low</option>
-            </select>
-          </div>
-          <div class="edit-form-group">
-            <label for="editTaskType">Type</label>
-            <select id="editTaskType" class="edit-select">
-              <option value="feature">Feature</option>
-              <option value="bug">Bug</option>
-              <option value="chore">Chore</option>
-              <option value="docs">Docs</option>
-              <option value="refactor">Refactor</option>
-              <option value="test">Test</option>
-            </select>
-          </div>
-        </div>
-        <div class="edit-form-group">
-          <label for="editTaskStatus">Status</label>
-          <select id="editTaskStatus" class="edit-select">
-            <option value="Backlog">Backlog</option>
-            <option value="To Do">To Do</option>
-            <option value="Doing">Doing</option>
-            <option value="Testing">Testing</option>
-            <option value="Done">Done</option>
-            <option value="Blocked">Blocked</option>
-          </select>
-        </div>
-        <div class="edit-form-actions">
-          <button class="edit-btn edit-btn-cancel" onclick="cancelEdit()">Cancel</button>
-          <button class="edit-btn edit-btn-save" onclick="saveTaskEdit()">Save</button>
-        </div>
+      <!-- PRD Edit Container (hidden by default) -->
+      <div class="prd-edit-container" id="prdEditContainer" style="display: none;">
+        <textarea class="prd-edit-textarea" id="prdEditTextarea" placeholder="Write your PRD in markdown..."></textarea>
       </div>
       <div class="prd-content" id="prdContent">
         <div class="prd-placeholder">Select a task to view its PRD</div>
@@ -1782,79 +1786,6 @@ ${allColumns
       </div>
       <div class="terminal-content" id="terminalContent">
         <div class="terminal-output-line info">Terminal ready. Execute commands to see output here.</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Agent Modal -->
-  <div class="modal-overlay" id="agentModal" style="display: none;">
-    <div class="modal agent-modal">
-      <h3>Send Task to AI Agent</h3>
-
-      <!-- Task Preview -->
-      <div class="task-preview">
-        <strong id="agentModalTaskTitle"></strong>
-        <p id="agentModalTaskDescription"></p>
-      </div>
-
-      <!-- No Providers Warning -->
-      <div class="no-providers-warning" id="noProvidersWarning" style="display: none;">
-        No AI providers configured. Please configure at least one provider via
-        <a href="#" onclick="configureProviders()">Kaiban: Configure AI Providers</a> command.
-      </div>
-
-      <!-- Execution Method Selection -->
-      <div class="form-group">
-        <label>Execution Method:</label>
-        <div class="provider-options">
-          <label>
-            <input type="radio" name="executionMethod" value="ralph" id="ralphMethod" onchange="onExecutionMethodChange()">
-            Execute with Ralph Loop (Terminal Command)
-          </label>
-          <label>
-            <input type="radio" name="executionMethod" value="agent" id="agentMethod" checked onchange="onExecutionMethodChange()">
-            Send to AI Agent
-          </label>
-        </div>
-      </div>
-
-      <!-- Ralph Loop Section -->
-      <div class="form-group" id="ralphSection" style="display: none;">
-        <p style="font-size: 12px; color: var(--vscode-descriptionForeground); margin-top: 0;">
-          This will execute the ralph-loop command in your terminal with the task information.
-        </p>
-      </div>
-
-      <!-- Provider Selection -->
-      <div class="form-group" id="providerSelectGroup">
-        <label for="providerSelect">Provider:</label>
-        <select id="providerSelect" onchange="onProviderChange()">
-          <option value="">Select a provider...</option>
-        </select>
-      </div>
-
-      <!-- Model Selection -->
-      <div class="form-group" id="modelSelectGroup" style="display: none;">
-        <label for="modelSelect">Model:</label>
-        <select id="modelSelect">
-          <option value="">Loading models...</option>
-        </select>
-      </div>
-
-      <!-- Cursor-specific options -->
-      <div class="provider-options" id="cursorOptions" style="display: none;">
-        <label>
-          <input type="checkbox" id="createPR" checked>
-          Auto-create Pull Request when complete
-        </label>
-      </div>
-
-      <!-- Actions -->
-      <div class="modal-actions">
-        <button class="modal-btn modal-btn-cancel" onclick="hideAgentModal()">Cancel</button>
-        <button class="modal-btn modal-btn-send" id="sendToAgentBtn" onclick="confirmSendToAgent()" disabled>
-          Execute
-        </button>
       </div>
     </div>
   </div>

@@ -14,9 +14,6 @@ const mockUpdateTaskStatus = vi.fn();
 const mockRejectTask = vi.fn();
 const mockUpdateTaskOrder = vi.fn();
 const mockUpdateTaskPRD = vi.fn();
-const mockGetAvailableProviders = vi.fn().mockResolvedValue([]);
-const mockGetAdapter = vi.fn();
-const mockGetEnabledAdapters = vi.fn().mockResolvedValue([]);
 
 // Mock TaskParser before importing KanbanViewProvider
 vi.mock("./taskParser", () => ({
@@ -27,42 +24,6 @@ vi.mock("./taskParser", () => ({
     updateTaskOrder = mockUpdateTaskOrder;
     updateTaskPRD = mockUpdateTaskPRD;
     rejectTask = mockRejectTask;
-  },
-}));
-
-// Mock ProviderRegistry to avoid issues with undefined apiKeyManager
-vi.mock("./services/providerRegistry", () => ({
-  ProviderRegistry: class {
-    registerAdapter = vi.fn();
-    getEnabledAdapters = mockGetEnabledAdapters;
-    getAvailableProviders = mockGetAvailableProviders;
-    getAdapter = mockGetAdapter;
-  },
-}));
-
-// Mock adapter imports to prevent vscode import issues
-vi.mock("./adapters/openrouterAdapter", () => ({
-  OpenRouterAdapter: class {
-    constructor(private readonly getApiKey: () => Promise<string | undefined>) {}
-    probe = () => this.getApiKey();
-  },
-}));
-vi.mock("./adapters/openaiAdapter", () => ({
-  OpenAIAdapter: class {
-    constructor(private readonly getApiKey: () => Promise<string | undefined>) {}
-    probe = () => this.getApiKey();
-  },
-}));
-vi.mock("./adapters/cursorCloudAdapter", () => ({
-  CursorCloudAdapter: class {
-    constructor(private readonly getApiKey: () => Promise<string | undefined>) {}
-    probe = () => this.getApiKey();
-  },
-}));
-vi.mock("./adapters/replicateAdapter", () => ({
-  ReplicateAdapter: class {
-    constructor(private readonly getApiKey: () => Promise<string | undefined>) {}
-    probe = () => this.getApiKey();
   },
 }));
 
@@ -110,9 +71,6 @@ describe("KanbanViewProvider", () => {
     mockUpdateTaskOrder.mockClear().mockResolvedValue(undefined);
     mockUpdateTaskPRD.mockClear().mockResolvedValue(undefined);
     mockRejectTask.mockClear().mockResolvedValue(undefined);
-    mockGetAvailableProviders.mockClear().mockResolvedValue([]);
-    mockGetAdapter.mockClear();
-    mockGetEnabledAdapters.mockClear().mockResolvedValue([]);
 
     // Re-setup vscode mocks after clearAllMocks
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
@@ -208,7 +166,7 @@ describe("KanbanViewProvider", () => {
     });
 
     it("should clear panel reference on dispose", async () => {
-      let disposeHandler: () => void;
+      let disposeHandler: (() => void) | undefined;
       (mockPanel.onDidDispose as Mock).mockImplementation((handler) => {
         disposeHandler = handler;
         return { dispose: vi.fn() };
@@ -248,28 +206,6 @@ describe("KanbanViewProvider", () => {
       await provider.show();
     });
 
-    describe("constructor", () => {
-      it("registers adapters when apiKeyManager is provided", async () => {
-        const apiKeyManager = {
-          getApiKey: vi.fn().mockResolvedValue("token"),
-        };
-        const newProvider = new KanbanViewProvider(
-          mockContext,
-          apiKeyManager as unknown as { getApiKey: (type: string) => Promise<string | undefined> }
-        );
-        const registry = newProvider as unknown as {
-          providerRegistry: { registerAdapter: Mock };
-        };
-
-        const adapters = registry.providerRegistry.registerAdapter.mock.calls.map(
-          (call) => call[0] as { probe: () => Promise<string | undefined> }
-        );
-        await Promise.all(adapters.map((adapter) => adapter.probe()));
-
-        expect(registry.providerRegistry.registerAdapter).toHaveBeenCalledTimes(4);
-        expect(apiKeyManager.getApiKey).toHaveBeenCalledTimes(4);
-      });
-    });
 
     describe("openTask command", () => {
       it("should open task file successfully", async () => {
@@ -774,279 +710,6 @@ describe("KanbanViewProvider", () => {
       });
     });
 
-    describe("getAvailableProviders command", () => {
-      it("should post available providers to webview", async () => {
-        mockGetAvailableProviders.mockResolvedValueOnce([
-          { id: "openai", name: "OpenAI", type: "openai", enabled: true },
-        ]);
-
-        await messageHandler({ command: "getAvailableProviders" });
-
-        expect(mockWebview.postMessage).toHaveBeenCalledWith({
-          command: "availableProviders",
-          providers: [{ id: "openai", name: "OpenAI", type: "openai", enabled: true }],
-        });
-      });
-
-      it("should post error when providers cannot be loaded", async () => {
-        mockGetAvailableProviders.mockRejectedValueOnce(new Error("Failed"));
-
-        await messageHandler({ command: "getAvailableProviders" });
-
-        expect(mockWebview.postMessage).toHaveBeenCalledWith({
-          command: "providerError",
-          error: "Error: Failed",
-        });
-      });
-    });
-
-    describe("getModelsForProvider command", () => {
-      it("should post error when provider is missing", async () => {
-        mockGetAdapter.mockReturnValueOnce(undefined);
-
-        await messageHandler({ command: "getModelsForProvider", provider: "openai" });
-
-        expect(mockWebview.postMessage).toHaveBeenCalledWith({
-          command: "updateModelsForProvider",
-          models: [],
-          error: "Error: Provider openai not found",
-        });
-      });
-
-      it("should post models for provider", async () => {
-        const adapter = {
-          getAvailableModels: vi.fn().mockResolvedValue([{ id: "model-1" }]),
-        };
-        mockGetAdapter.mockReturnValueOnce(adapter);
-
-        await messageHandler({ command: "getModelsForProvider", provider: "openai" });
-
-        expect(mockWebview.postMessage).toHaveBeenCalledWith({
-          command: "updateModelsForProvider",
-          provider: "openai",
-          models: [{ id: "model-1" }],
-        });
-      });
-    });
-
-    describe("prepareAgentPrompt command", () => {
-      it("should show error when task is missing", async () => {
-        mockParseTasks.mockResolvedValueOnce([]);
-
-        await messageHandler({ command: "prepareAgentPrompt", taskId: "missing" });
-
-        expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-          "Error preparing agent: Error: Task missing not found"
-        );
-      });
-
-      it("should show error when task is claimed", async () => {
-        mockParseTasks.mockResolvedValueOnce([buildTask({ claimedBy: "cursor" })]);
-
-        await messageHandler({ command: "prepareAgentPrompt", taskId: "task-1" });
-
-        expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-          "Error preparing agent: Error: Task is already claimed by cursor"
-        );
-      });
-
-      it("should post agent modal data with PRD content", async () => {
-        const task = buildTask({ prdPath: "./prd/test.md", agentNotes: "Note" });
-        mockParseTasks.mockResolvedValueOnce([task]);
-        mockGetAvailableProviders.mockResolvedValueOnce([
-          { id: "openai", name: "OpenAI", type: "openai", enabled: true },
-        ]);
-        vi.mocked(vscode.workspace).workspaceFolders = [
-          { uri: { fsPath: "/workspace" } },
-        ] as unknown as readonly vscode.WorkspaceFolder[];
-        (vscode.workspace.openTextDocument as Mock).mockResolvedValue({
-          getText: () => "# PRD",
-        });
-
-        await messageHandler({ command: "prepareAgentPrompt", taskId: "task-1" });
-
-        expect(mockWebview.postMessage).toHaveBeenCalledWith({
-          command: "showAgentModal",
-          task: expect.objectContaining({ id: "task-1", prdContent: "# PRD" }),
-          providers: [{ id: "openai", name: "OpenAI", type: "openai", enabled: true }],
-        });
-      });
-
-      it("should post agent modal data when no PRD path", async () => {
-        const task = buildTask({ prdPath: "" });
-        mockParseTasks.mockResolvedValueOnce([task]);
-        mockGetAvailableProviders.mockResolvedValueOnce([
-          { id: "openai", name: "OpenAI", type: "openai", enabled: true },
-        ]);
-
-        await messageHandler({ command: "prepareAgentPrompt", taskId: "task-1" });
-
-        expect(mockWebview.postMessage).toHaveBeenCalledWith({
-          command: "showAgentModal",
-          task: expect.objectContaining({ id: "task-1", prdContent: "" }),
-          providers: [{ id: "openai", name: "OpenAI", type: "openai", enabled: true }],
-        });
-      });
-    });
-
-    describe("sendToAgent command", () => {
-      it("should post error when task is missing", async () => {
-        mockParseTasks.mockResolvedValueOnce([]);
-
-        await messageHandler({ command: "sendToAgent", taskId: "missing", provider: "openai" });
-
-        expect(mockWebview.postMessage).toHaveBeenCalledWith({
-          command: "agentSendError",
-          taskId: "missing",
-          error: "Error: Task missing not found",
-        });
-      });
-
-      it("should post error when task already claimed", async () => {
-        mockParseTasks.mockResolvedValueOnce([buildTask({ claimedBy: "cursor" })]);
-
-        await messageHandler({ command: "sendToAgent", taskId: "task-1", provider: "openai" });
-
-        expect(mockWebview.postMessage).toHaveBeenCalledWith({
-          command: "agentSendError",
-          taskId: "task-1",
-          error: "Error: Task is already claimed by cursor",
-        });
-      });
-
-      it("should post error when adapter is missing", async () => {
-        mockParseTasks.mockResolvedValueOnce([buildTask()]);
-        mockGetAdapter.mockReturnValueOnce(undefined);
-
-        await messageHandler({ command: "sendToAgent", taskId: "task-1", provider: "openai" });
-
-        expect(mockWebview.postMessage).toHaveBeenCalledWith({
-          command: "agentSendError",
-          taskId: "task-1",
-          error: "Error: Provider openai not available",
-        });
-      });
-
-      it("should post error when adapter returns error response", async () => {
-        mockParseTasks.mockResolvedValueOnce([buildTask()]);
-        const adapter = {
-          displayName: "OpenAI",
-          supportsAgentMode: false,
-          sendTask: vi.fn().mockResolvedValue({
-            id: "",
-            status: "error",
-            provider: "openai",
-            error: "API down",
-          }),
-        };
-        mockGetAdapter.mockReturnValueOnce(adapter);
-
-        await messageHandler({ command: "sendToAgent", taskId: "task-1", provider: "openai" });
-
-        expect(mockWebview.postMessage).toHaveBeenCalledWith({
-          command: "agentSendError",
-          taskId: "task-1",
-          error: "API down",
-        });
-      });
-
-      it("should send task and notify success", async () => {
-        vi.useFakeTimers();
-        mockParseTasks.mockResolvedValueOnce([buildTask({ status: "Doing" })]);
-        const adapter = {
-          displayName: "Cursor",
-          supportsAgentMode: true,
-          sendTask: vi.fn().mockResolvedValue({
-            id: "agent-1",
-            status: "completed",
-            provider: "cursor",
-            branchName: "cursor-agent/task",
-          }),
-          checkStatus: vi.fn().mockResolvedValue({
-            id: "agent-1",
-            status: "completed",
-            provider: "cursor",
-            prUrl: "https://example.com/pr",
-          }),
-        };
-        mockGetAdapter.mockReturnValue(adapter);
-        (vscode.window.showInformationMessage as Mock).mockResolvedValue("View PR");
-
-        await messageHandler({
-          command: "sendToAgent",
-          taskId: "task-1",
-          provider: "cursor",
-          model: "cursor-agent",
-        });
-
-        vi.advanceTimersByTime(30000);
-        await vi.runOnlyPendingTimersAsync();
-
-        expect(mockWebview.postMessage).toHaveBeenCalledWith({
-          command: "agentSendSuccess",
-          taskId: "task-1",
-          agentId: "agent-1",
-          provider: "cursor",
-          model: "cursor-agent",
-        });
-        expect(vscode.env.openExternal).toHaveBeenCalled();
-        vi.useRealTimers();
-      });
-
-      it("should include PRD content when sending to agent", async () => {
-        const loadSpy = vi
-          .spyOn(
-            provider as unknown as { loadPRDContentRaw: (path: string) => Promise<string> },
-            "loadPRDContentRaw"
-          )
-          .mockResolvedValueOnce("PRD content");
-        mockParseTasks.mockResolvedValueOnce([buildTask({ status: "Doing", prdPath: "./prd.md" })]);
-        const adapter = {
-          displayName: "OpenAI",
-          supportsAgentMode: false,
-          sendTask: vi.fn().mockResolvedValue({
-            id: "agent-2",
-            status: "completed",
-            provider: "openai",
-          }),
-        };
-        mockGetAdapter.mockReturnValue(adapter);
-
-        await messageHandler({
-          command: "sendToAgent",
-          taskId: "task-1",
-          provider: "openai",
-        });
-
-        expect(loadSpy).toHaveBeenCalledWith("./prd.md");
-        expect(adapter.sendTask).toHaveBeenCalledWith(
-          expect.objectContaining({ prdContent: "PRD content" }),
-          { model: undefined }
-        );
-      });
-
-      it("should show send message without branch name", async () => {
-        mockParseTasks.mockResolvedValueOnce([buildTask({ status: "Doing" })]);
-        const adapter = {
-          displayName: "OpenAI",
-          supportsAgentMode: false,
-          sendTask: vi.fn().mockResolvedValue({
-            id: "agent-3",
-            status: "completed",
-            provider: "openai",
-          }),
-        };
-        mockGetAdapter.mockReturnValue(adapter);
-
-        await messageHandler({
-          command: "sendToAgent",
-          taskId: "task-1",
-          provider: "openai",
-        });
-
-        expect(vscode.window.showInformationMessage).toHaveBeenCalledWith("Task sent to OpenAI");
-      });
-    });
   });
 
   describe("renderMarkdown (via loadPRD)", () => {
@@ -1055,6 +718,8 @@ describe("KanbanViewProvider", () => {
       vi.mocked(vscode.workspace).workspaceFolders = [
         { uri: { fsPath: "/workspace" } },
       ] as unknown as readonly vscode.WorkspaceFolder[];
+      // Clear postMessage mock to isolate PRD-specific calls
+      (mockWebview.postMessage as Mock).mockClear();
     });
 
     it("should convert headers", async () => {
@@ -1064,10 +729,12 @@ describe("KanbanViewProvider", () => {
 
       await messageHandler({ command: "loadPRD", prdPath: "./test.md" });
 
-      const postMessageCall = (mockWebview.postMessage as Mock).mock.calls[0][0];
-      expect(postMessageCall.content).toContain("<h1>H1</h1>");
-      expect(postMessageCall.content).toContain("<h2>H2</h2>");
-      expect(postMessageCall.content).toContain("<h3>H3</h3>");
+      // Find the updatePRDContent message
+      const calls = (mockWebview.postMessage as Mock).mock.calls;
+      const postMessageCall = calls.find((c) => c[0]?.command === "updatePRDContent")?.[0];
+      expect(postMessageCall?.content).toContain("<h1>H1</h1>");
+      expect(postMessageCall?.content).toContain("<h2>H2</h2>");
+      expect(postMessageCall?.content).toContain("<h3>H3</h3>");
     });
 
     it("should convert bold and italic", async () => {
@@ -1077,9 +744,10 @@ describe("KanbanViewProvider", () => {
 
       await messageHandler({ command: "loadPRD", prdPath: "./test.md" });
 
-      const postMessageCall = (mockWebview.postMessage as Mock).mock.calls[0][0];
-      expect(postMessageCall.content).toContain("<strong>bold</strong>");
-      expect(postMessageCall.content).toContain("<em>italic</em>");
+      const calls = (mockWebview.postMessage as Mock).mock.calls;
+      const postMessageCall = calls.find((c) => c[0]?.command === "updatePRDContent")?.[0];
+      expect(postMessageCall?.content).toContain("<strong>bold</strong>");
+      expect(postMessageCall?.content).toContain("<em>italic</em>");
     });
 
     it("should convert code blocks", async () => {
@@ -1089,8 +757,9 @@ describe("KanbanViewProvider", () => {
 
       await messageHandler({ command: "loadPRD", prdPath: "./test.md" });
 
-      const postMessageCall = (mockWebview.postMessage as Mock).mock.calls[0][0];
-      expect(postMessageCall.content).toContain("<pre><code>");
+      const calls = (mockWebview.postMessage as Mock).mock.calls;
+      const postMessageCall = calls.find((c) => c[0]?.command === "updatePRDContent")?.[0];
+      expect(postMessageCall?.content).toContain("<pre><code>");
     });
 
     it("should convert inline code", async () => {
@@ -1100,8 +769,9 @@ describe("KanbanViewProvider", () => {
 
       await messageHandler({ command: "loadPRD", prdPath: "./test.md" });
 
-      const postMessageCall = (mockWebview.postMessage as Mock).mock.calls[0][0];
-      expect(postMessageCall.content).toContain("<code>code</code>");
+      const calls = (mockWebview.postMessage as Mock).mock.calls;
+      const postMessageCall = calls.find((c) => c[0]?.command === "updatePRDContent")?.[0];
+      expect(postMessageCall?.content).toContain("<code>code</code>");
     });
 
     it("should convert links", async () => {
@@ -1111,8 +781,9 @@ describe("KanbanViewProvider", () => {
 
       await messageHandler({ command: "loadPRD", prdPath: "./test.md" });
 
-      const postMessageCall = (mockWebview.postMessage as Mock).mock.calls[0][0];
-      expect(postMessageCall.content).toContain('<a href="http://example.com">text</a>');
+      const calls = (mockWebview.postMessage as Mock).mock.calls;
+      const postMessageCall = calls.find((c) => c[0]?.command === "updatePRDContent")?.[0];
+      expect(postMessageCall?.content).toContain('<a href="http://example.com">text</a>');
     });
   });
 
@@ -1257,7 +928,8 @@ describe("KanbanViewProvider", () => {
       expect(mockWebview.html).toContain("showRejectModal");
     });
 
-    it("should show agent badge when claimedBy is set", async () => {
+    // Skip: agent badge UI has been removed - only Claude CLI workflow now
+    it.skip("should show agent badge when claimedBy is set", async () => {
       const tasks: Task[] = [
         {
           id: "1",
@@ -1293,72 +965,6 @@ describe("KanbanViewProvider", () => {
 
       expect(mockWebview.html).toContain("agent-badge");
       expect(mockWebview.html).toContain("claude");
-    });
-
-    it("should render agent button when sending is allowed", async () => {
-      const task = buildTask({ status: "To Do" });
-      const html = await (
-        provider as unknown as {
-          getWebviewContent: (
-            groupedTasks: Record<string, Task[]>,
-            hasAnyApiKey: boolean
-          ) => Promise<string>;
-        }
-      ).getWebviewContent(
-        {
-          "To Do": [task],
-          Doing: [],
-          Testing: [],
-          Done: [],
-        },
-        true
-      );
-
-      expect(html).toContain("showAgentModal('task-1')");
-    });
-
-    it("should hide agent button when agent is running", async () => {
-      const task = buildTask({ status: "Doing", agentStatus: "running" });
-      const html = await (
-        provider as unknown as {
-          getWebviewContent: (
-            groupedTasks: Record<string, Task[]>,
-            hasAnyApiKey: boolean
-          ) => Promise<string>;
-        }
-      ).getWebviewContent(
-        {
-          "To Do": [],
-          Doing: [task],
-          Testing: [],
-          Done: [],
-        },
-        true
-      );
-
-      expect(html).not.toContain("showAgentModal('task-1')");
-    });
-
-    it("should hide agent button for non-active status", async () => {
-      const task = buildTask({ status: "Done" });
-      const html = await (
-        provider as unknown as {
-          getWebviewContent: (
-            groupedTasks: Record<string, Task[]>,
-            hasAnyApiKey: boolean
-          ) => Promise<string>;
-        }
-      ).getWebviewContent(
-        {
-          "To Do": [],
-          Doing: [],
-          Testing: [],
-          Done: [task],
-        },
-        true
-      );
-
-      expect(html).not.toContain("showAgentModal('task-1')");
     });
 
     it("should show rejection count badge when rejectionCount > 0", async () => {
@@ -1436,30 +1042,6 @@ describe("KanbanViewProvider", () => {
       expect(mockWebview.html).toContain("completed");
     });
 
-    it("should show agent running badge and provider badge", async () => {
-      const tasks: Task[] = [
-        buildTask({
-          agentStatus: "running",
-          agentProvider: "openai",
-          status: "Doing",
-        }),
-      ];
-
-      mockParseTasks.mockResolvedValue(tasks);
-      mockGroupByStatus.mockReturnValue({
-        "To Do": [],
-        Doing: tasks,
-        Testing: [],
-        Done: [],
-      });
-      mockGetEnabledAdapters.mockResolvedValueOnce([{}]);
-
-      const newProvider = new KanbanViewProvider(mockContext);
-      await newProvider.show();
-
-      expect(mockWebview.html).toContain("agent-running");
-      expect(mockWebview.html).toContain("provider-openai");
-    });
   });
 
   describe("escapeHtml", () => {
@@ -1624,20 +1206,12 @@ describe("KanbanViewProvider", () => {
   });
 
   describe("early returns without panel", () => {
-    it("no-ops handler calls when panel is undefined", async () => {
+    it("no-ops loadPRDContent when panel is undefined", async () => {
       const internal = provider as unknown as {
         loadPRDContent: (path: string, taskFilePath?: string) => Promise<void>;
-        handleGetAvailableProviders: () => Promise<void>;
-        handleGetModelsForProvider: (provider: "openai") => Promise<void>;
-        handlePrepareAgentPrompt: (taskId: string) => Promise<void>;
-        handleSendToAgent: (taskId: string, provider: "openai") => Promise<void>;
       };
 
       await internal.loadPRDContent("./prd.md");
-      await internal.handleGetAvailableProviders();
-      await internal.handleGetModelsForProvider("openai");
-      await internal.handlePrepareAgentPrompt("task-1");
-      await internal.handleSendToAgent("task-1", "openai");
 
       expect(mockWebview.postMessage).not.toHaveBeenCalled();
     });
@@ -1661,155 +1235,6 @@ describe("KanbanViewProvider", () => {
       expect(internal.skipNextConfigRefresh).toBe(false);
       expect(consoleErrorSpy).toHaveBeenCalled();
       consoleErrorSpy.mockRestore();
-    });
-  });
-
-  describe("startAgentPolling", () => {
-    it("stops polling when adapter does not support status checks", async () => {
-      vi.useFakeTimers();
-      mockGetAdapter.mockReturnValueOnce({});
-
-      const internal = provider as unknown as {
-        startAgentPolling: (taskId: string, agentId: string, provider: "openai") => void;
-        pollingIntervals: Map<string, NodeJS.Timeout>;
-      };
-
-      internal.startAgentPolling("task-1", "agent-1", "openai");
-      vi.advanceTimersByTime(30000);
-      await vi.runOnlyPendingTimersAsync();
-
-      expect(internal.pollingIntervals.size).toBe(0);
-      vi.useRealTimers();
-    });
-
-    it("handles completed status without PR URL", async () => {
-      vi.useFakeTimers();
-      mockGetAdapter.mockReturnValueOnce({
-        checkStatus: vi.fn().mockResolvedValue({
-          id: "agent-1",
-          status: "completed",
-          provider: "openai",
-        }),
-      });
-      (vscode.window.showInformationMessage as Mock).mockResolvedValue(undefined);
-
-      const internal = provider as unknown as {
-        startAgentPolling: (taskId: string, agentId: string, provider: "openai") => void;
-      };
-
-      internal.startAgentPolling("task-1", "agent-1", "openai");
-      vi.advanceTimersByTime(30000);
-      await vi.runOnlyPendingTimersAsync();
-
-      expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
-        "Agent completed the task!"
-      );
-      vi.useRealTimers();
-    });
-
-    it("does not open PR when PR URL is missing", async () => {
-      vi.useFakeTimers();
-      mockGetAdapter.mockReturnValueOnce({
-        checkStatus: vi.fn().mockResolvedValue({
-          id: "agent-1",
-          status: "completed",
-          provider: "openai",
-          prUrl: "",
-        }),
-      });
-      (vscode.window.showInformationMessage as Mock).mockResolvedValue("View PR");
-
-      const internal = provider as unknown as {
-        startAgentPolling: (taskId: string, agentId: string, provider: "openai") => void;
-      };
-
-      internal.startAgentPolling("task-1", "agent-1", "openai");
-      vi.advanceTimersByTime(30000);
-      await vi.runOnlyPendingTimersAsync();
-
-      expect(vscode.env.openExternal).not.toHaveBeenCalled();
-      vi.useRealTimers();
-    });
-
-    it("handles error status with warning message", async () => {
-      vi.useFakeTimers();
-      mockGetAdapter.mockReturnValueOnce({
-        checkStatus: vi.fn().mockResolvedValue({
-          id: "agent-1",
-          status: "error",
-          provider: "openai",
-          error: "Boom",
-        }),
-      });
-
-      const internal = provider as unknown as {
-        startAgentPolling: (taskId: string, agentId: string, provider: "openai") => void;
-      };
-
-      internal.startAgentPolling("task-1", "agent-1", "openai");
-      vi.advanceTimersByTime(30000);
-      await vi.runOnlyPendingTimersAsync();
-
-      expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
-        "Agent encountered an error: Boom"
-      );
-      vi.useRealTimers();
-    });
-
-    it("logs polling errors", async () => {
-      vi.useFakeTimers();
-      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-      mockGetAdapter.mockReturnValueOnce({
-        checkStatus: vi.fn().mockRejectedValue(new Error("poll failed")),
-      });
-
-      const internal = provider as unknown as {
-        startAgentPolling: (taskId: string, agentId: string, provider: "openai") => void;
-      };
-
-      internal.startAgentPolling("task-1", "agent-1", "openai");
-      vi.advanceTimersByTime(30000);
-      await vi.runOnlyPendingTimersAsync();
-
-      expect(consoleErrorSpy).toHaveBeenCalled();
-      consoleErrorSpy.mockRestore();
-      vi.useRealTimers();
-    });
-
-    it("ignores non-terminal agent statuses", async () => {
-      vi.useFakeTimers();
-      mockGetAdapter.mockReturnValueOnce({
-        checkStatus: vi.fn().mockResolvedValue({
-          id: "agent-2",
-          status: "running",
-          provider: "openai",
-        }),
-      });
-
-      const internal = provider as unknown as {
-        startAgentPolling: (taskId: string, agentId: string, provider: "openai") => void;
-        stopAgentPolling: (taskId: string) => void;
-      };
-
-      internal.startAgentPolling("task-2", "agent-2", "openai");
-      vi.advanceTimersByTime(30000);
-      await vi.runOnlyPendingTimersAsync();
-
-      expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
-      internal.stopAgentPolling("task-2");
-      vi.useRealTimers();
-    });
-  });
-
-  describe("stopAgentPolling", () => {
-    it("does nothing when no interval exists", () => {
-      const internal = provider as unknown as {
-        stopAgentPolling: (taskId: string) => void;
-        pollingIntervals: Map<string, NodeJS.Timeout>;
-      };
-
-      internal.stopAgentPolling("missing-task");
-      expect(internal.pollingIntervals.size).toBe(0);
     });
   });
 

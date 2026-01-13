@@ -1449,3 +1449,239 @@ body.has-rate-limit-banner {
     right 0.3s ease-in-out,
     transform 0.3s ease-in-out;
 }
+
+/* ============================================
+   Claude Quota Widget
+   ============================================ */
+
+.quota-widget {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--vscode-sideBar-background);
+  border-radius: 6px;
+  font-size: 12px;
+  margin-left: auto;
+  margin-right: 12px;
+  position: relative;
+  cursor: pointer;
+}
+
+.quota-loading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+}
+
+.quota-loading svg {
+  animation: spin 1s linear infinite;
+}
+
+.quota-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Primary bar - always visible */
+.quota-primary {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Expanded section - hidden by default, shown on hover */
+.quota-expanded {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: max-width 0.3s ease, opacity 0.2s ease, padding 0.3s ease;
+  padding-left: 0;
+}
+
+.quota-widget:hover .quota-expanded {
+  max-width: 300px;
+  opacity: 1;
+  padding-left: 10px;
+  border-left: 1px solid var(--vscode-panel-border);
+  margin-left: 2px;
+}
+
+.quota-bar-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.quota-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--vscode-descriptionForeground);
+  min-width: 16px;
+  text-transform: uppercase;
+}
+
+.quota-bar {
+  width: 48px;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.quota-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s ease, background-color 0.3s ease;
+}
+
+.quota-bar-fill[data-status="good"] {
+  background: #22c55e;
+}
+
+.quota-bar-fill[data-status="warning"] {
+  background: #eab308;
+}
+
+.quota-bar-fill[data-status="critical"] {
+  background: #ef4444;
+}
+
+.quota-value {
+  font-size: 10px;
+  font-weight: 500;
+  min-width: 28px;
+  text-align: right;
+  color: var(--vscode-foreground);
+}
+
+.quota-value[data-status="good"] {
+  color: #22c55e;
+}
+
+.quota-value[data-status="warning"] {
+  color: #eab308;
+}
+
+.quota-value[data-status="critical"] {
+  color: #ef4444;
+}
+
+.quota-refresh-btn {
+  background: transparent;
+  border: none;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s, color 0.2s;
+  flex-shrink: 0;
+}
+
+.quota-refresh-btn:hover {
+  background: var(--vscode-toolbar-hoverBackground);
+  color: var(--vscode-foreground);
+}
+
+.quota-refresh-btn.refreshing svg {
+  animation: spin 0.8s linear infinite;
+}
+
+.quota-error {
+  color: var(--vscode-errorForeground, #f44336);
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.quota-error-text {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Sonnet group - hidden by default, shown when data is available */
+.quota-sonnet-group {
+  display: none;
+}
+
+.quota-sonnet-group.visible {
+  display: flex;
+}
+
+/* ============================================
+   PRD Edit Styles
+   ============================================ */
+
+.prd-edit-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  padding: 0;
+}
+
+.prd-edit-textarea {
+  flex: 1;
+  font-family: var(--vscode-editor-font-family, "Consolas", "Monaco", monospace);
+  font-size: 13px;
+  line-height: 1.6;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+  border-radius: 6px;
+  padding: 12px;
+  resize: none;
+  min-height: 200px;
+  tab-size: 2;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-y: auto;
+}
+
+.prd-edit-textarea:focus {
+  outline: none;
+  border-color: var(--vscode-focusBorder);
+}
+
+.prd-edit-textarea::placeholder {
+  color: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground));
+}
+
+.prd-edit-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding-top: 4px;
+  flex-shrink: 0;
+}
+
+/* Scrollbar for PRD edit textarea */
+.prd-edit-textarea::-webkit-scrollbar {
+  width: 8px;
+}
+
+.prd-edit-textarea::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.prd-edit-textarea::-webkit-scrollbar-thumb {
+  background: var(--vscode-scrollbarSlider-background);
+  border-radius: 4px;
+}
+
+.prd-edit-textarea::-webkit-scrollbar-thumb:hover {
+  background: var(--vscode-scrollbarSlider-hoverBackground);
+}

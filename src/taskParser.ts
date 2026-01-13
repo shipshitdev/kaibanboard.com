@@ -2,8 +2,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
 
-import type { ProviderType } from "./types/aiProvider";
-
 export interface Task {
   id: string;
   label: string;
@@ -24,15 +22,6 @@ export interface Task {
   completedAt: string;
   rejectionCount: number;
   agentNotes: string;
-  // AI Provider metadata
-  agentProvider?: ProviderType;
-  agentModel?: string;
-  agentId?: string;
-  agentStatus?: "pending" | "running" | "completed" | "error";
-  agentBranchName?: string;
-  agentPrUrl?: string;
-  agentTokensUsed?: number;
-  agentCost?: number;
 }
 
 export class TaskParser {

@@ -1,22 +1,129 @@
 const vscode = acquireVsCodeApi();
 let draggedElement = null;
 let isDragging = false;
-const currentSortMode = "default"; // 'default', 'priority-asc', 'priority-desc'
+let currentSortMode = "default"; // 'default', 'priority-asc', 'priority-desc'
 const originalTaskOrder = new Map(); // Store original order of tasks per column
 
-// Agent modal state
-const currentAgentTaskId = null;
-const availableProviders = [];
-const availableModels = [];
-
 // Claude execution state
-const currentPrdTaskId = null;
+let currentPrdTaskId = null;
 const runningTasks = new Set(); // Track task IDs that are currently executing
+
+// Claude quota functions
+function refreshClaudeQuota() {
+  const refreshBtn = document.querySelector('.quota-refresh-btn');
+  if (refreshBtn) {
+    refreshBtn.classList.add('refreshing');
+  }
+  vscode.postMessage({ command: 'refreshClaudeQuota' });
+}
+
+function updateQuotaUI(data) {
+  const loading = document.getElementById('quotaLoading');
+  const content = document.getElementById('quotaContent');
+  const error = document.getElementById('quotaError');
+  const refreshBtn = document.querySelector('.quota-refresh-btn');
+
+  // Remove refreshing state
+  if (refreshBtn) {
+    refreshBtn.classList.remove('refreshing');
+  }
+
+  if (!data.isMacOS) {
+    // Not macOS - show nothing or minimal message
+    if (loading) loading.style.display = 'none';
+    if (content) content.style.display = 'none';
+    if (error) {
+      error.style.display = 'flex';
+      document.getElementById('quotaErrorText').textContent = 'macOS only';
+    }
+    return;
+  }
+
+  if (data.error && !data.usage) {
+    // Error state without data
+    if (loading) loading.style.display = 'none';
+    if (content) content.style.display = 'none';
+    if (error) {
+      error.style.display = 'flex';
+      document.getElementById('quotaErrorText').textContent = data.error;
+    }
+    return;
+  }
+
+  if (data.usage) {
+    // Show data
+    if (loading) loading.style.display = 'none';
+    if (error) error.style.display = 'none';
+    if (content) content.style.display = 'flex';
+
+    // Update 5-hour bar (utilization is already a percentage 0-100)
+    const fill5h = document.getElementById('quota5h');
+    const value5h = document.getElementById('quota5hValue');
+    const percent5h = Math.round(data.usage.fiveHour.utilization);
+    if (fill5h) {
+      fill5h.style.width = `${Math.min(percent5h, 100)}%`;
+      fill5h.dataset.status = data.usage.fiveHour.status;
+    }
+    if (value5h) {
+      value5h.textContent = `${percent5h}%`;
+      value5h.dataset.status = data.usage.fiveHour.status;
+    }
+
+    // Update 7-day bar
+    const fill7d = document.getElementById('quota7d');
+    const value7d = document.getElementById('quota7dValue');
+    const percent7d = Math.round(data.usage.sevenDay.utilization);
+    if (fill7d) {
+      fill7d.style.width = `${Math.min(percent7d, 100)}%`;
+      fill7d.dataset.status = data.usage.sevenDay.status;
+    }
+    if (value7d) {
+      value7d.textContent = `${percent7d}%`;
+      value7d.dataset.status = data.usage.sevenDay.status;
+    }
+
+    // Update Sonnet bar if available
+    const sonnetGroup = document.getElementById('quotaSonnetGroup');
+    if (data.usage.sevenDaySonnet && sonnetGroup) {
+      sonnetGroup.classList.add('visible');
+      const fillSonnet = document.getElementById('quotaSonnet');
+      const valueSonnet = document.getElementById('quotaSonnetValue');
+      const percentSonnet = Math.round(data.usage.sevenDaySonnet.utilization);
+      if (fillSonnet) {
+        fillSonnet.style.width = `${Math.min(percentSonnet, 100)}%`;
+        fillSonnet.dataset.status = data.usage.sevenDaySonnet.status;
+      }
+      if (valueSonnet) {
+        valueSonnet.textContent = `${percentSonnet}%`;
+        valueSonnet.dataset.status = data.usage.sevenDaySonnet.status;
+      }
+    } else if (sonnetGroup) {
+      sonnetGroup.classList.remove('visible');
+    }
+
+    // Update tooltips with reset times
+    const quotaPrimary = document.querySelector('.quota-primary');
+    const group7d = document.querySelector('.quota-bar-group[title*="7-day weekly"]');
+    if (quotaPrimary) {
+      let tooltip = `5h: ${percent5h}% (resets ${data.usage.fiveHour.resetTimeFormatted})`;
+      tooltip += `\n7d: ${percent7d}% (resets ${data.usage.sevenDay.resetTimeFormatted})`;
+      if (data.usage.sevenDaySonnet) {
+        const percentSonnet = Math.round(data.usage.sevenDaySonnet.utilization);
+        tooltip += `\nSonnet: ${percentSonnet}% (resets ${data.usage.sevenDaySonnet.resetTimeFormatted})`;
+      }
+      tooltip += '\n\nHover to see all limits';
+      quotaPrimary.title = tooltip;
+    }
+    if (group7d) {
+      group7d.title = `7-day weekly limit: ${percent7d}% used\nResets in ${data.usage.sevenDay.resetTimeFormatted}`;
+    }
+  }
+}
 
 // Rate limit state
 let rateLimitTaskId = null;
 let rateLimitEndTime = null;
-const rateLimitInterval = null;
+let rateLimitInterval = null;
 
 // Rate limit functions
 function startRateLimitCountdown(taskId, waitSeconds) {
@@ -169,39 +276,6 @@ function startRateLimitCountdown(taskId, waitSeconds) {
       }
     }
 
-    // Agent modal functions
-    function showAgentModal(taskId) {
-      currentAgentTaskId = taskId;
-
-      // Get task card data
-      const card = document.querySelector(`[data-task-id="${taskId}"]`);
-      if (card) {
-        document.getElementById('agentModalTaskTitle').textContent = card.dataset.label || '';
-        document.getElementById('agentModalTaskDescription').textContent = card.dataset.description || 'No description';
-      }
-
-      // Reset form
-      document.getElementById('providerSelect').value = '';
-      document.getElementById('modelSelectGroup').style.display = 'none';
-      document.getElementById('cursorOptions').style.display = 'none';
-      document.getElementById('sendToAgentBtn').disabled = true;
-      document.getElementById('noProvidersWarning').style.display = 'none';
-      document.getElementById('agentMethod').checked = true;
-      document.getElementById('ralphMethod').checked = false;
-      onExecutionMethodChange();
-
-      // Show modal
-      document.getElementById('agentModal').style.display = 'flex';
-
-      // Request available providers
-      vscode.postMessage({ command: 'getAvailableProviders' });
-    }
-
-    function hideAgentModal() {
-      document.getElementById('agentModal').style.display = 'none';
-      currentAgentTaskId = null;
-    }
-
     // Confirmation modal for stopping execution
     let stopExecutionCallbacks = { onConfirm: null, onCancel: null };
 
@@ -253,210 +327,100 @@ function startRateLimitCountdown(taskId, waitSeconds) {
       }
     }
 
-    function onProviderChange() {
-      const provider = document.getElementById('providerSelect').value;
-      const modelGroup = document.getElementById('modelSelectGroup');
-      const cursorOptions = document.getElementById('cursorOptions');
-      const sendBtn = document.getElementById('sendToAgentBtn');
+    // PRD edit state
+    let isPrdEditMode = false;
+    let currentPrdPath = '';
 
-      if (!provider) {
-        modelGroup.style.display = 'none';
-        cursorOptions.style.display = 'none';
-        sendBtn.disabled = true;
+    // PRD edit functions
+    function togglePrdEditMode() {
+      const panel = document.getElementById('prdPanel');
+      const prdPath = panel ? panel.dataset.prdPath : '';
+
+      if (!prdPath) {
+        alert('No PRD to edit');
         return;
       }
 
-      // Show/hide Cursor-specific options
-      cursorOptions.style.display = provider === 'cursor' ? 'block' : 'none';
-
-      // For Cursor, no model selection needed (agent mode)
-      if (provider === 'cursor') {
-        modelGroup.style.display = 'none';
-        sendBtn.disabled = false;
+      if (!isPrdEditMode) {
+        // Enter edit mode - request raw content
+        currentPrdPath = prdPath;
+        vscode.postMessage({
+          command: 'getPrdRawContent',
+          prdPath: prdPath
+        });
       } else {
-        // Request models for this provider
-        modelGroup.style.display = 'block';
-        document.getElementById('modelSelect').innerHTML = '<option value="">Loading models...</option>';
-        sendBtn.disabled = true;
-        vscode.postMessage({ command: 'getModelsForProvider', provider: provider });
+        // Exit edit mode
+        cancelPrdEdit();
       }
     }
 
-    function onModelChange() {
-      const model = document.getElementById('modelSelect').value;
-      document.getElementById('sendToAgentBtn').disabled = !model;
-    }
+    function enterPrdEditMode(content) {
+      isPrdEditMode = true;
 
-    function onExecutionMethodChange() {
-      const ralphMethod = document.getElementById('ralphMethod').checked;
-      const agentMethod = document.getElementById('agentMethod').checked;
-      const ralphSection = document.getElementById('ralphSection');
-      const providerGroup = document.getElementById('providerSelectGroup');
-      const modelGroup = document.getElementById('modelSelectGroup');
-      const cursorOptions = document.getElementById('cursorOptions');
-      const sendBtn = document.getElementById('sendToAgentBtn');
-
-      if (ralphMethod) {
-        // Ralph Loop selected
-        ralphSection.style.display = 'block';
-        providerGroup.style.display = 'none';
-        modelGroup.style.display = 'none';
-        cursorOptions.style.display = 'none';
-        sendBtn.disabled = false;
-        sendBtn.textContent = 'Execute with Ralph';
-      } else if (agentMethod) {
-        // AI Agent selected
-        ralphSection.style.display = 'none';
-        providerGroup.style.display = 'block';
-        sendBtn.textContent = 'Send to Agent';
-        // Reset provider selection state
-        const provider = document.getElementById('providerSelect').value;
-        if (!provider) {
-          sendBtn.disabled = true;
-        } else {
-          onProviderChange();
-        }
-      }
-    }
-
-    function confirmSendToAgent() {
-      if (!currentAgentTaskId) return;
-
-      const ralphMethod = document.getElementById('ralphMethod').checked;
-      const agentMethod = document.getElementById('agentMethod').checked;
-
-      if (ralphMethod) {
-        // Execute Ralph command
-        const btn = document.getElementById('sendToAgentBtn');
-        btn.disabled = true;
-        btn.innerHTML = 'Executing... <span class="loading-spinner"></span>';
-
-        vscode.postMessage({
-          command: 'executeRalphCommand',
-          taskId: currentAgentTaskId
-        });
-        return;
-      }
-
-      if (agentMethod) {
-        // Send to AI Agent (existing logic)
-        const provider = document.getElementById('providerSelect').value;
-        const model = document.getElementById('modelSelect').value;
-        const createPR = document.getElementById('createPR').checked;
-
-        if (!provider) {
-          alert('Please select a provider.');
-          return;
-        }
-
-        if (provider !== 'cursor' && !model) {
-          alert('Please select a model.');
-          return;
-        }
-
-        // Show loading state
-        const btn = document.getElementById('sendToAgentBtn');
-        btn.disabled = true;
-        btn.innerHTML = 'Sending... <span class="loading-spinner"></span>';
-
-        vscode.postMessage({
-          command: 'sendToAgent',
-          taskId: currentAgentTaskId,
-          provider: provider,
-          model: model || undefined,
-          options: {
-            createPR: createPR
-          }
-        });
-      }
-    }
-
-    function configureProviders() {
-      hideAgentModal();
-      vscode.postMessage({ command: 'configureProviders' });
-    }
-
-    // Task edit state
-    let currentEditTaskId = null;
-    let isEditMode = false;
-
-    // Task edit functions
-    function toggleEditMode() {
-      const selectedCard = document.querySelector('.task-card.selected');
-      if (!selectedCard) return;
-
-      isEditMode = !isEditMode;
-      const editForm = document.getElementById('taskEditForm');
+      const editContainer = document.getElementById('prdEditContainer');
       const prdContent = document.getElementById('prdContent');
-      const editBtn = document.getElementById('editTaskBtn');
+      const headerTitle = document.getElementById('prdHeaderTitle');
+      const textarea = document.getElementById('prdEditTextarea');
+
+      // View mode buttons
+      const editBtn = document.getElementById('editPrdBtn');
+      const playBtn = document.getElementById('playPrdBtn');
+      // Edit mode buttons
+      const cancelBtn = document.getElementById('cancelPrdBtn');
+      const saveBtn = document.getElementById('savePrdBtn');
+
+      // Populate textarea with raw markdown
+      textarea.value = content;
+
+      // Show edit container, hide PRD content
+      editContainer.style.display = 'flex';
+      prdContent.style.display = 'none';
+      headerTitle.textContent = 'Edit PRD';
+
+      // Hide view mode buttons, show edit mode buttons
+      if (editBtn) editBtn.style.display = 'none';
+      if (playBtn) playBtn.style.display = 'none';
+      if (cancelBtn) cancelBtn.style.display = 'inline-flex';
+      if (saveBtn) saveBtn.style.display = 'inline-flex';
+    }
+
+    function cancelPrdEdit() {
+      isPrdEditMode = false;
+
+      const editContainer = document.getElementById('prdEditContainer');
+      const prdContent = document.getElementById('prdContent');
       const headerTitle = document.getElementById('prdHeaderTitle');
 
-      if (isEditMode) {
-        currentEditTaskId = selectedCard.dataset.taskId;
+      // View mode buttons
+      const editBtn = document.getElementById('editPrdBtn');
+      const playBtn = document.getElementById('playPrdBtn');
+      // Edit mode buttons
+      const cancelBtn = document.getElementById('cancelPrdBtn');
+      const saveBtn = document.getElementById('savePrdBtn');
 
-        // Populate form with current values
-        document.getElementById('editTaskLabel').value = selectedCard.dataset.label || '';
-        document.getElementById('editTaskDescription').value = selectedCard.dataset.description || '';
-        document.getElementById('editTaskPriority').value = selectedCard.querySelector('.badge.priority-high') ? 'High' :
-          selectedCard.querySelector('.badge.priority-medium') ? 'Medium' : 'Low';
-
-        // Get type from badge
-        const typeBadge = selectedCard.querySelector('.badge.type');
-        document.getElementById('editTaskType').value = typeBadge ? typeBadge.textContent.toLowerCase() : 'feature';
-
-        document.getElementById('editTaskStatus').value = selectedCard.dataset.status || 'Backlog';
-
-        // Show edit form, hide PRD content
-        editForm.style.display = 'flex';
-        prdContent.style.display = 'none';
-        headerTitle.textContent = 'Edit Task';
-        editBtn.classList.add('active');
-      } else {
-        cancelEdit();
-      }
-    }
-
-    function cancelEdit() {
-      isEditMode = false;
-      currentEditTaskId = null;
-
-      const editForm = document.getElementById('taskEditForm');
-      const prdContent = document.getElementById('prdContent');
-      const editBtn = document.getElementById('editTaskBtn');
-      const headerTitle = document.getElementById('prdHeaderTitle');
-
-      editForm.style.display = 'none';
+      editContainer.style.display = 'none';
       prdContent.style.display = 'block';
       headerTitle.textContent = 'PRD Preview';
-      editBtn.classList.remove('active');
+
+      // Show view mode buttons, hide edit mode buttons
+      if (editBtn) editBtn.style.display = 'inline-flex';
+      if (playBtn && currentPrdTaskId) playBtn.style.display = 'inline-flex';
+      if (cancelBtn) cancelBtn.style.display = 'none';
+      if (saveBtn) saveBtn.style.display = 'none';
     }
 
-    function saveTaskEdit() {
-      if (!currentEditTaskId) return;
+    function savePrdEdit() {
+      if (!currentPrdPath) return;
 
-      const updates = {
-        label: document.getElementById('editTaskLabel').value.trim(),
-        description: document.getElementById('editTaskDescription').value.trim(),
-        priority: document.getElementById('editTaskPriority').value,
-        type: document.getElementById('editTaskType').value,
-        status: document.getElementById('editTaskStatus').value
-      };
+      const textarea = document.getElementById('prdEditTextarea');
+      const content = textarea.value;
 
       vscode.postMessage({
-        command: 'updateTask',
-        taskId: currentEditTaskId,
-        updates: updates
+        command: 'savePrdContent',
+        prdPath: currentPrdPath,
+        content: content
       });
-
-      cancelEdit();
     }
-
-    // Close agent modal on overlay click
-    document.getElementById('agentModal').addEventListener('click', (e) => {
-      if (e.target.id === 'agentModal') {
-        hideAgentModal();
-      }
-    });
 
     // Click handler for stop execution modal overlay
     const stopExecutionModal = document.getElementById('stopExecutionModal');
@@ -541,14 +505,14 @@ function startRateLimitCountdown(taskId, waitSeconds) {
           }
 
           // Show edit task button
-          const editTaskBtn = document.getElementById('editTaskBtn');
-          if (editTaskBtn) {
-            editTaskBtn.style.display = 'inline-block';
+          const editPrdBtn = document.getElementById('editPrdBtn');
+          if (editPrdBtn) {
+            editPrdBtn.style.display = 'inline-block';
           }
 
           // Cancel any active edit mode when switching tasks
-          if (isEditMode) {
-            cancelEdit();
+          if (isPrdEditMode) {
+            cancelPrdEdit();
           }
         }
 
@@ -764,14 +728,14 @@ function startRateLimitCountdown(taskId, waitSeconds) {
       }
 
       // Show edit task button when a task is selected
-      const editTaskBtn = document.getElementById('editTaskBtn');
-      if (editTaskBtn) {
-        editTaskBtn.style.display = currentPrdTaskId ? 'inline-block' : 'none';
+      const editPrdBtn = document.getElementById('editPrdBtn');
+      if (editPrdBtn) {
+        editPrdBtn.style.display = currentPrdTaskId ? 'inline-block' : 'none';
       }
 
       // Cancel any active edit mode when switching tasks
-      if (isEditMode) {
-        cancelEdit();
+      if (isPrdEditMode) {
+        cancelPrdEdit();
       }
 
       // Load PRD content with task file path for accurate resolution
@@ -821,10 +785,8 @@ function startRateLimitCountdown(taskId, waitSeconds) {
         content.innerHTML = '<div class="prd-placeholder">Select a task to view its PRD</div>';
       }
 
-      // Hide create/edit buttons
-      const editBtn = document.getElementById('editPrdBtn');
+      // Hide create button
       const createBtn = document.getElementById('createPrdBtn');
-      if (editBtn) editBtn.style.display = 'none';
       if (createBtn) createBtn.style.display = 'none';
     }
 
@@ -1144,6 +1106,12 @@ function startRateLimitCountdown(taskId, waitSeconds) {
       currentSortMode = sortSelect.value;
 
       switch (currentSortMode) {
+        case 'order-asc':
+          sortTasksByOrder(true);
+          break;
+        case 'order-desc':
+          sortTasksByOrder(false);
+          break;
         case 'priority-asc':
           sortTasksByPriority(true);
           break;
@@ -1156,11 +1124,50 @@ function startRateLimitCountdown(taskId, waitSeconds) {
         case 'name-desc':
           sortTasksByName(false);
           break;
-        case 'default':
         default:
-          sortTasksByDefault();
+          sortTasksByOrder(true);
           break;
       }
+    }
+
+    function sortTasksByOrder(ascending) {
+      const columns = document.querySelectorAll('.column');
+
+      columns.forEach(column => {
+        const content = column.querySelector('.column-content');
+        if (!content) return;
+
+        const tasks = Array.from(content.querySelectorAll('.task-card'));
+        const emptyState = content.querySelector('.empty-state');
+
+        if (tasks.length === 0) return;
+
+        // Sort tasks by order attribute
+        tasks.sort((a, b) => {
+          const orderA = parseInt(a.dataset.order || '999999', 10);
+          const orderB = parseInt(b.dataset.order || '999999', 10);
+          const diff = orderA - orderB;
+          return ascending ? diff : -diff;
+        });
+
+        // Store empty state node if it exists
+        const emptyStateNode = emptyState ? emptyState.cloneNode(true) : null;
+
+        // Remove all child nodes
+        while (content.firstChild) {
+          content.removeChild(content.firstChild);
+        }
+
+        // Re-append sorted tasks
+        tasks.forEach(task => {
+          content.appendChild(task);
+        });
+
+        // Re-append empty state if it existed
+        if (emptyStateNode) {
+          content.appendChild(emptyStateNode);
+        }
+      });
     }
 
     function sortTasksByPriority(ascending) {
@@ -1370,7 +1377,6 @@ function startRateLimitCountdown(taskId, waitSeconds) {
           const board = document.getElementById('kanbanBoard');
           const content = document.getElementById('prdContent');
           const terminalPanel = document.getElementById('terminalPanel');
-          const editBtn = document.getElementById('editPrdBtn');
           const createBtn = document.getElementById('createPrdBtn');
 
           if (panel && content) {
@@ -1385,15 +1391,9 @@ function startRateLimitCountdown(taskId, waitSeconds) {
             });
             content.innerHTML = `<div class="prd-markdown">${message.content}</div>`;
 
-            // Show/hide create/edit buttons based on PRD existence
-            if (editBtn && createBtn) {
-              if (message.prdExists) {
-                editBtn.style.display = 'inline-flex';
-                createBtn.style.display = 'none';
-              } else {
-                editBtn.style.display = 'none';
-                createBtn.style.display = 'inline-flex';
-              }
+            // Show/hide create PRD button based on PRD existence
+            if (createBtn) {
+              createBtn.style.display = message.prdExists ? 'none' : 'inline-flex';
             }
 
             // Store current PRD path for edit function
@@ -1407,77 +1407,7 @@ function startRateLimitCountdown(taskId, waitSeconds) {
           break;
         }
 
-        case 'availableProviders': {
-          availableProviders = message.providers || [];
-          const select = document.getElementById('providerSelect');
-          const warning = document.getElementById('noProvidersWarning');
-          const selectGroup = document.getElementById('providerSelectGroup');
-
-          if (availableProviders.length === 0) {
-            warning.style.display = 'block';
-            selectGroup.style.display = 'none';
-          } else {
-            warning.style.display = 'none';
-            selectGroup.style.display = 'block';
-            select.innerHTML = '<option value="">Select a provider...</option>' +
-              availableProviders.map(p =>
-                `<option value="${p.type}">${p.name}${p.enabled ? '' : ' (not configured)'}</option>`
-              ).join('');
-          }
-          break;
-        }
-
-        case 'updateModelsForProvider': {
-          availableModels = message.models || [];
-          const select = document.getElementById('modelSelect');
-          const sendBtn = document.getElementById('sendToAgentBtn');
-
-          if (availableModels.length === 0) {
-            select.innerHTML = '<option value="">No models available</option>';
-            sendBtn.disabled = true;
-          } else {
-            select.innerHTML = availableModels.map(m =>
-              `<option value="${m.id}">${m.name} ($${m.inputPrice}/M in, $${m.outputPrice}/M out)</option>`
-            ).join('');
-            select.onchange = onModelChange;
-            // Auto-select first model
-            if (availableModels.length > 0) {
-              select.value = availableModels[0].id;
-              sendBtn.disabled = false;
-            }
-          }
-          break;
-        }
-
-        case 'agentSendSuccess': {
-          hideAgentModal();
-          // Refresh to show updated task status
-          refresh();
-          break;
-        }
-
-        case 'agentSendError': {
-          const btn = document.getElementById('sendToAgentBtn');
-          btn.disabled = false;
-          btn.textContent = 'Send to Agent';
-          alert('Error: ' + (message.error || 'Failed to send to agent'));
-          break;
-        }
-
-        case 'agentStatusUpdate': {
-          // Update task card with new agent status
-          const card = document.querySelector(`[data-task-id="${message.taskId}"]`);
-          if (card) {
-            // Remove old status classes
-            card.classList.remove('agent-pending', 'agent-running', 'agent-completed', 'agent-error');
-            // Add new status class
-            card.classList.add(`agent-${message.status}`);
-          }
-          break;
-        }
-
         case 'ralphCommandExecuted': {
-          hideAgentModal();
           showTerminalPanel();
           appendToTerminal('✅ Ralph command executed successfully', 'success');
           appendToTerminal(message.command || 'Command executed', 'info');
@@ -1485,9 +1415,6 @@ function startRateLimitCountdown(taskId, waitSeconds) {
         }
 
         case 'ralphCommandError': {
-          const btn = document.getElementById('sendToAgentBtn');
-          btn.disabled = false;
-          btn.textContent = 'Execute with Ralph';
           const errorMsg = message.error || 'Failed to execute ralph command';
           showTerminalPanel();
           appendToTerminal(`❌ Ralph command error: ${errorMsg}`, 'error');
@@ -1608,5 +1535,68 @@ function startRateLimitCountdown(taskId, waitSeconds) {
           break;
         }
         // ============ End Batch Execution Message Handlers ============
+
+        // ============ Claude Quota Message Handlers ============
+        case 'claudeQuotaLoading': {
+          const loading = document.getElementById('quotaLoading');
+          const content = document.getElementById('quotaContent');
+          const error = document.getElementById('quotaError');
+          if (loading) loading.style.display = 'flex';
+          if (content) content.style.display = 'none';
+          if (error) error.style.display = 'none';
+          break;
+        }
+
+        case 'claudeQuotaUpdate': {
+          updateQuotaUI(message.data);
+          break;
+        }
+
+        case 'claudeQuotaError': {
+          const loading = document.getElementById('quotaLoading');
+          const content = document.getElementById('quotaContent');
+          const error = document.getElementById('quotaError');
+          const refreshBtn = document.querySelector('.quota-refresh-btn');
+          if (refreshBtn) refreshBtn.classList.remove('refreshing');
+          if (loading) loading.style.display = 'none';
+          if (content) content.style.display = 'none';
+          if (error) {
+            error.style.display = 'flex';
+            document.getElementById('quotaErrorText').textContent = message.error || 'Failed to fetch quota';
+          }
+          break;
+        }
+        // ============ End Claude Quota Message Handlers ============
+
+        // ============ PRD Edit Message Handlers ============
+        case 'prdRawContent': {
+          if (message.content !== undefined) {
+            enterPrdEditMode(message.content);
+          } else if (message.error) {
+            alert('Failed to load PRD content: ' + message.error);
+          }
+          break;
+        }
+
+        case 'prdSaveResult': {
+          if (message.success) {
+            // Exit edit mode and refresh the preview
+            cancelPrdEdit();
+            // Reload the PRD to show updated content
+            if (currentPrdPath) {
+              const selectedCard = document.querySelector('.task-card.selected');
+              const taskFilePath = selectedCard ? selectedCard.dataset.filepath : undefined;
+              vscode.postMessage({
+                command: 'loadPRD',
+                prdPath: currentPrdPath,
+                taskFilePath: taskFilePath
+              });
+            }
+          } else {
+            alert('Failed to save PRD: ' + (message.error || 'Unknown error'));
+          }
+          break;
+        }
+        // ============ End PRD Edit Message Handlers ============
       }
     });

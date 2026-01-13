@@ -1,29 +1,15 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { CursorCloudAdapter } from "./adapters/cursorCloudAdapter";
-import { OpenAIAdapter } from "./adapters/openaiAdapter";
-import { OpenRouterAdapter } from "./adapters/openrouterAdapter";
-import { ReplicateAdapter } from "./adapters/replicateAdapter";
-import { ApiKeyManager } from "./config/apiKeyManager";
 import { KanbanViewProvider } from "./kanbanView";
-import { generatePRD, generateSimplePRDTemplate } from "./services/prdGenerator";
-import { ProviderRegistry } from "./services/providerRegistry";
 import { SkillService } from "./services/skillService";
-import { generateSimpleTaskTemplate, generateTask } from "./services/taskGenerator";
-import type { ProviderType } from "./types/aiProvider";
 import {
-  createFile,
-  ensureDirectoryExists,
-  generateUniqueFileName,
   getPRDBasePath,
   getTasksBasePath,
   getWorkspaceFolder,
-  slugify,
 } from "./utils/fileUtils";
 
 let kanbanView: KanbanViewProvider;
-let apiKeyManager: ApiKeyManager;
 
 export function activate(context: vscode.ExtensionContext) {
   // Check if running in Cursor (not VS Code)
@@ -33,7 +19,7 @@ export function activate(context: vscode.ExtensionContext) {
   if (!isCursor) {
     vscode.window
       .showErrorMessage(
-        "Kaiban Markdown requires Cursor IDE. This extension is not compatible with VS Code. Please install Cursor IDE from https://cursor.com",
+        "Kaiban Board requires Cursor IDE. This extension is not compatible with VS Code. Please install Cursor IDE from https://cursor.com",
         "Download Cursor"
       )
       .then((selection) => {
@@ -42,16 +28,13 @@ export function activate(context: vscode.ExtensionContext) {
         }
       });
     // Don't activate the extension - return early
-    console.error("Kaiban Markdown: Extension requires Cursor IDE. Activation aborted.");
+    console.error("Kaiban Board: Extension requires Cursor IDE. Activation aborted.");
     return;
   }
 
-  console.log("Kaiban Markdown extension activated");
+  console.log("Kaiban Board extension activated");
 
-  // Initialize API key manager
-  apiKeyManager = new ApiKeyManager(context.secrets);
-
-  kanbanView = new KanbanViewProvider(context, apiKeyManager);
+  kanbanView = new KanbanViewProvider(context);
 
   // Register command to show board
   const showBoardCommand = vscode.commands.registerCommand("kaiban.showBoard", async () => {
@@ -72,113 +55,7 @@ export function activate(context: vscode.ExtensionContext) {
     }
   });
 
-  // Register command to configure providers
-  const configureProvidersCommand = vscode.commands.registerCommand(
-    "kaiban.configureProviders",
-    async () => {
-      const providers: ProviderType[] = ["cursor", "openai", "openrouter", "replicate"];
-      const items = await Promise.all(
-        providers.map(async (p) => {
-          const info = apiKeyManager.getProviderInfo(p);
-          const hasKey = await apiKeyManager.hasApiKey(p);
-          return {
-            label: info.name,
-            description: hasKey ? "$(check) Configured" : "$(circle-slash) Not configured",
-            provider: p,
-          };
-        })
-      );
-
-      const selected = await vscode.window.showQuickPick(items, {
-        placeHolder: "Select a provider to configure",
-      });
-
-      if (selected) {
-        vscode.commands.executeCommand("kaiban.setApiKey", selected.provider);
-      }
-    }
-  );
-
-  // Register command to set API key
-  const setApiKeyCommand = vscode.commands.registerCommand(
-    "kaiban.setApiKey",
-    async (provider?: ProviderType) => {
-      // If no provider specified, ask user to select one
-      if (!provider) {
-        const providers: ProviderType[] = ["cursor", "openai", "openrouter", "replicate"];
-        const items = providers.map((p) => ({
-          label: apiKeyManager.getProviderInfo(p).name,
-          provider: p,
-        }));
-
-        const selected = await vscode.window.showQuickPick(items, {
-          placeHolder: "Select a provider",
-        });
-
-        if (!selected) return;
-        provider = selected.provider;
-      }
-
-      const info = apiKeyManager.getProviderInfo(provider);
-
-      const apiKey = await vscode.window.showInputBox({
-        prompt: `Enter your ${info.name} API key`,
-        password: true,
-        placeHolder: info.placeholder,
-        validateInput: (value) => {
-          const validation = apiKeyManager.validateKeyFormat(provider, value);
-          return validation.valid ? null : validation.error;
-        },
-      });
-
-      if (apiKey) {
-        await apiKeyManager.setApiKey(provider, apiKey);
-        vscode.window.showInformationMessage(`${info.name} API key saved securely`);
-      }
-    }
-  );
-
-  // Register command to clear API key
-  const clearApiKeyCommand = vscode.commands.registerCommand("kaiban.clearApiKey", async () => {
-    const providers: ProviderType[] = ["cursor", "openai", "openrouter", "replicate"];
-    const items = await Promise.all(
-      providers.map(async (p) => {
-        const info = apiKeyManager.getProviderInfo(p);
-        const hasKey = await apiKeyManager.hasApiKey(p);
-        return {
-          label: info.name,
-          description: hasKey ? "$(check) Has API key" : "$(circle-slash) No API key",
-          provider: p,
-          hasKey,
-        };
-      })
-    );
-
-    const configuredItems = items.filter((i) => i.hasKey);
-    if (configuredItems.length === 0) {
-      vscode.window.showInformationMessage("No API keys configured");
-      return;
-    }
-
-    const selected = await vscode.window.showQuickPick(configuredItems, {
-      placeHolder: "Select a provider to clear API key",
-    });
-
-    if (selected) {
-      const confirm = await vscode.window.showWarningMessage(
-        `Are you sure you want to clear the ${selected.label} API key?`,
-        { modal: true },
-        "Clear"
-      );
-
-      if (confirm === "Clear") {
-        await apiKeyManager.deleteApiKey(selected.provider);
-        vscode.window.showInformationMessage(`${selected.label} API key cleared`);
-      }
-    }
-  });
-
-  // Register command to create PRD
+  // Register command to create PRD via Claude CLI
   const createPRDCommand = vscode.commands.registerCommand("kaiban.createPRD", async () => {
     try {
       const workspaceFolder = getWorkspaceFolder();
@@ -187,101 +64,56 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
 
-      // Prompt for PRD title
-      const title = await vscode.window.showInputBox({
-        prompt: "Enter PRD title",
-        placeHolder: "e.g., User Authentication System",
-        validateInput: (value) => {
-          if (!value || value.trim().length === 0) {
-            return "Title cannot be empty";
-          }
-          return null;
-        },
-      });
-
-      if (!title) {
-        return;
-      }
-
-      // Prompt for description (optional)
-      const description = await vscode.window.showInputBox({
-        prompt: "Enter PRD description (optional)",
-        placeHolder: "Brief description of what this PRD covers",
-      });
-
-      // Check if AI providers are available
-      const hasProviders = await providerRegistry
-        .getEnabledAdapters()
-        .then((adapters) => adapters.length > 0);
-
-      let prdContent: string;
-      let useAI = false;
-
-      if (hasProviders) {
-        // Ask user if they want to use AI
-        const useAIChoice = await vscode.window.showQuickPick(
-          [
-            { label: "Yes", description: "Use AI to generate PRD content" },
-            { label: "No", description: "Create template only" },
-          ],
-          {
-            placeHolder: "Use AI to generate PRD content?",
-          }
-        );
-
-        useAI = useAIChoice?.label === "Yes";
-      }
-
-      if (useAI) {
-        try {
-          vscode.window.showInformationMessage("Generating PRD with AI...");
-          const generated = await generatePRD(providerRegistry, {
-            title,
-            description: description || undefined,
-          });
-          prdContent = generated.content;
-          vscode.window.showInformationMessage(
-            `PRD generated using ${generated.provider}${generated.model ? ` (${generated.model})` : ""}`
-          );
-        } catch (error) {
-          vscode.window.showWarningMessage(
-            `AI generation failed: ${error}. Creating template instead.`
-          );
-          prdContent = generateSimplePRDTemplate(title, description || undefined);
-        }
-      } else {
-        prdContent = generateSimplePRDTemplate(title, description || undefined);
-      }
-
-      // Generate file name
-      const slug = slugify(title);
+      // Get Claude CLI configuration
+      const config = vscode.workspace.getConfiguration("kaiban");
+      const claudePath = config.get<string>("claude.executablePath", "claude");
+      const additionalFlags = config.get<string>("claude.additionalFlags", "");
       const prdBasePath = getPRDBasePath(workspaceFolder);
-      await ensureDirectoryExists(prdBasePath);
 
-      const fileName = generateUniqueFileName(prdBasePath, `${slug}-prd`, ".md");
-      const filePath = `${prdBasePath}/${fileName}`;
+      // Build the prompt for Claude to interactively create a PRD
+      const prompt = `Help me create a Product Requirements Document (PRD).
 
-      // Create file
-      await createFile(filePath, prdContent);
+Ask me the following questions one at a time:
+1. What is the feature or product name?
+2. What problem does it solve? (Overview)
+3. What are the main goals? (2-3 bullet points)
+4. What are the key requirements? (numbered list)
+5. What are the acceptance criteria? (checklist format)
+6. Any technical notes or constraints?
 
-      // Show success message
-      vscode.window.showInformationMessage(`PRD created: ${fileName}`);
+After gathering all information, create a PRD file at ${prdBasePath}/<slug-based-on-title>.md with this structure:
+- # <Title> - Product Requirements Document
+- ## Overview
+- ## Goals
+- ## Requirements
+- ## Acceptance Criteria
+- ## Technical Notes
 
-      // Open the file
-      const uri = vscode.Uri.file(filePath);
-      const document = await vscode.workspace.openTextDocument(uri);
-      await vscode.window.showTextDocument(document);
+Important: Create the directory if it doesn't exist. Use a kebab-case filename based on the title.`;
 
-      // Refresh board if it's open
-      if (kanbanView) {
-        await kanbanView.refresh();
-      }
+      // Build command
+      const flags = additionalFlags ? `${additionalFlags} ` : "";
+      const fullCommand = `${claudePath} ${flags}"${prompt.replace(/"/g, '\\"')}"`;
+
+      // Get workspace path for terminal cwd
+      const cwd = workspaceFolder.uri.fsPath;
+
+      // Create terminal
+      const terminal = vscode.window.createTerminal({
+        name: "Claude: Create PRD",
+        cwd: cwd,
+      });
+
+      terminal.show();
+      terminal.sendText(fullCommand);
+
+      vscode.window.showInformationMessage("Claude CLI opened - follow the prompts to create your PRD");
     } catch (error) {
-      vscode.window.showErrorMessage(`Failed to create PRD: ${error}`);
+      vscode.window.showErrorMessage(`Failed to start PRD creation: ${error}`);
     }
   });
 
-  // Register command to create Task
+  // Register command to create Task via Claude CLI
   const createTaskCommand = vscode.commands.registerCommand("kaiban.createTask", async () => {
     try {
       const workspaceFolder = getWorkspaceFolder();
@@ -290,339 +122,204 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
 
-      // Prompt for task title
-      const title = await vscode.window.showInputBox({
-        prompt: "Enter task title",
-        placeHolder: "e.g., Implement user authentication",
+      // Get Claude CLI configuration
+      const config = vscode.workspace.getConfiguration("kaiban");
+      const claudePath = config.get<string>("claude.executablePath", "claude");
+      const additionalFlags = config.get<string>("claude.additionalFlags", "");
+      const tasksBasePath = getTasksBasePath(workspaceFolder);
+      const prdBasePath = getPRDBasePath(workspaceFolder);
+
+      // Build the prompt for Claude to interactively create a Task
+      const prompt = `Help me create a Task for my Kanban board.
+
+Ask me the following questions one at a time:
+1. What is the task title?
+2. What is the task description?
+3. What type is it? (Feature, Bug, Enhancement, or Research)
+4. What priority? (High, Medium, or Low)
+5. What status should it start in? (Backlog, To Do, Doing, Testing, Done, or Blocked)
+6. Should this task be linked to an existing PRD? If so, which one? (Check ${prdBasePath} for existing PRDs)
+
+After gathering all information, create a task file at ${tasksBasePath}/<slug-based-on-title>.md with this exact structure:
+
+## Task: <Title>
+
+**ID:** task-<timestamp>
+**Label:** <Title>
+**Description:** <Description>
+**Type:** <Type>
+**Status:** <Status>
+**Priority:** <Priority>
+**Created:** <YYYY-MM-DD>
+**Updated:** <YYYY-MM-DD>
+**PRD:** [Link](<relative-path-to-prd>) or empty if no PRD
+
+---
+
+## Additional Notes
+
+<Any additional context or notes>
+
+Important: Create the directory if it doesn't exist. Use a kebab-case filename based on the title. Generate a unique task ID using the current timestamp.`;
+
+      // Build command
+      const flags = additionalFlags ? `${additionalFlags} ` : "";
+      const fullCommand = `${claudePath} ${flags}"${prompt.replace(/"/g, '\\"')}"`;
+
+      // Get workspace path for terminal cwd
+      const cwd = workspaceFolder.uri.fsPath;
+
+      // Create terminal
+      const terminal = vscode.window.createTerminal({
+        name: "Claude: Create Task",
+        cwd: cwd,
+      });
+
+      terminal.show();
+      terminal.sendText(fullCommand);
+
+      vscode.window.showInformationMessage("Claude CLI opened - follow the prompts to create your task");
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to start task creation: ${error}`);
+    }
+  });
+
+  // Register command to configure board settings
+  const configureCommand = vscode.commands.registerCommand("kaiban.configure", async () => {
+    const allValidColumns = ["Backlog", "To Do", "Doing", "Testing", "Done", "Blocked"];
+    const columnsConfig = vscode.workspace.getConfiguration("kaiban.columns");
+    const prdConfig = vscode.workspace.getConfiguration("kaiban.prd");
+    const taskConfig = vscode.workspace.getConfiguration("kaiban.task");
+
+    // Show quick pick for configuration options
+    const configOption = await vscode.window.showQuickPick(
+      [
+        {
+          label: "Configure Columns",
+          description: "Select which columns to display on the Kanban board",
+          option: "columns",
+        },
+        {
+          label: "Configure PRD Base Path",
+          description: "Set the base path for PRD files",
+          option: "prd",
+        },
+        {
+          label: "Configure Task Base Path",
+          description: "Set the base path for task files",
+          option: "task",
+        },
+      ],
+      {
+        placeHolder: "Select a configuration option",
+      }
+    );
+
+    if (!configOption) return;
+
+    if (configOption.option === "columns") {
+      // Configure columns
+      const currentColumns = columnsConfig.get<string[]>("enabled", [
+        "To Do",
+        "Doing",
+        "Testing",
+        "Done",
+      ]);
+
+      const columnItems = allValidColumns.map((col) => ({
+        label: col,
+        picked: currentColumns.includes(col),
+      }));
+
+      const selected = await vscode.window.showQuickPick(columnItems, {
+        placeHolder: "Select columns to display (use Ctrl/Cmd+Click to select multiple)",
+        canPickMany: true,
+      });
+
+      if (selected !== undefined) {
+        const selectedColumns = selected.map((item) => item.label);
+        if (selectedColumns.length > 0) {
+          await columnsConfig.update(
+            "enabled",
+            selectedColumns,
+            vscode.ConfigurationTarget.Workspace
+          );
+          // Manually refresh the board immediately
+          await kanbanView.refresh();
+          vscode.window.showInformationMessage(`Columns updated: ${selectedColumns.join(", ")}`);
+        } else {
+          vscode.window.showWarningMessage("At least one column must be selected.");
+        }
+      }
+    } else if (configOption.option === "prd") {
+      // Configure PRD path
+      const currentPath = prdConfig.get<string>("basePath", ".agent/PRDS");
+
+      const newPath = await vscode.window.showInputBox({
+        prompt: "Enter the base path for PRD files (relative to workspace root)",
+        value: currentPath,
+        placeHolder: ".agent/PRDS",
         validateInput: (value) => {
           if (!value || value.trim().length === 0) {
-            return "Title cannot be empty";
+            return "Path cannot be empty";
+          }
+          const cleanPath = value.trim().replace(/^\/+|\/+$/g, "");
+          if (cleanPath.length === 0) {
+            return "Invalid path";
           }
           return null;
         },
       });
 
-      if (!title) {
-        return;
+      if (newPath !== undefined) {
+        const cleanPath = newPath.trim().replace(/^\/+|\/+$/g, "");
+        await prdConfig.update("basePath", cleanPath, vscode.ConfigurationTarget.Workspace);
+        vscode.window.showInformationMessage(
+          `PRD base path updated to: ${cleanPath}. Refresh the board to apply changes.`
+        );
       }
+    } else if (configOption.option === "task") {
+      // Configure Task path
+      const currentPath = taskConfig.get<string>("basePath", ".agent/TASKS");
 
-      // Prompt for description (optional)
-      const description = await vscode.window.showInputBox({
-        prompt: "Enter task description (optional)",
-        placeHolder: "Brief description of the task",
+      const newPath = await vscode.window.showInputBox({
+        prompt: "Enter the base path for task files (relative to workspace root)",
+        value: currentPath,
+        placeHolder: ".agent/TASKS",
+        validateInput: (value) => {
+          if (!value || value.trim().length === 0) {
+            return "Path cannot be empty";
+          }
+          const cleanPath = value.trim().replace(/^\/+|\/+$/g, "");
+          if (cleanPath.length === 0) {
+            return "Invalid path";
+          }
+          return null;
+        },
       });
 
-      // Prompt for type
-      const typeChoice = await vscode.window.showQuickPick(
-        [
-          { label: "Feature", value: "Feature" },
-          { label: "Bug", value: "Bug" },
-          { label: "Enhancement", value: "Enhancement" },
-          { label: "Research", value: "Research" },
-        ],
-        {
-          placeHolder: "Select task type",
-        }
-      );
-
-      if (!typeChoice) {
-        return;
-      }
-
-      // Prompt for priority
-      const priorityChoice = await vscode.window.showQuickPick(
-        [
-          { label: "High", value: "High" },
-          { label: "Medium", value: "Medium" },
-          { label: "Low", value: "Low" },
-        ],
-        {
-          placeHolder: "Select priority",
-        }
-      );
-
-      if (!priorityChoice) {
-        return;
-      }
-
-      // Prompt for status
-      const statusChoice = await vscode.window.showQuickPick(
-        [
-          { label: "Backlog", value: "Backlog" },
-          { label: "To Do", value: "To Do" },
-          { label: "Doing", value: "Doing" },
-          { label: "Testing", value: "Testing" },
-          { label: "Done", value: "Done" },
-          { label: "Blocked", value: "Blocked" },
-        ],
-        {
-          placeHolder: "Select status",
-        }
-      );
-
-      if (!statusChoice) {
-        return;
-      }
-
-      // Check if AI providers are available
-      const hasProviders = await providerRegistry
-        .getEnabledAdapters()
-        .then((adapters) => adapters.length > 0);
-
-      let taskContent: string;
-      let useAI = false;
-      let taskId = `task-${Date.now().toString(36)}`;
-
-      if (hasProviders) {
-        // Ask user if they want to use AI
-        const useAIChoice = await vscode.window.showQuickPick(
-          [
-            { label: "Yes", description: "Use AI to generate task description" },
-            { label: "No", description: "Create template only" },
-          ],
-          {
-            placeHolder: "Use AI to generate task description?",
-          }
+      if (newPath !== undefined) {
+        const cleanPath = newPath.trim().replace(/^\/+|\/+$/g, "");
+        await taskConfig.update("basePath", cleanPath, vscode.ConfigurationTarget.Workspace);
+        vscode.window.showInformationMessage(
+          `Task base path updated to: ${cleanPath}. Refresh the board to apply changes.`
         );
-
-        useAI = useAIChoice?.label === "Yes";
       }
-
-      if (useAI) {
-        try {
-          vscode.window.showInformationMessage("Generating task with AI...");
-          const generated = await generateTask(providerRegistry, {
-            title,
-            description: description || undefined,
-            type: typeChoice.value as "Feature" | "Bug" | "Enhancement" | "Research",
-            priority: priorityChoice.value as "High" | "Medium" | "Low",
-            status: statusChoice.value as
-              | "Backlog"
-              | "To Do"
-              | "Doing"
-              | "Testing"
-              | "Done"
-              | "Blocked",
-          });
-          taskContent = generated.content;
-          taskId = generated.id;
-          vscode.window.showInformationMessage(
-            `Task generated using ${generated.provider}${generated.model ? ` (${generated.model})` : ""}`
-          );
-        } catch (error) {
-          vscode.window.showWarningMessage(
-            `AI generation failed: ${error}. Creating template instead.`
-          );
-          taskContent = generateSimpleTaskTemplate({
-            id: taskId,
-            label: title,
-            description: description || undefined,
-            type: typeChoice.value,
-            priority: priorityChoice.value,
-            status: statusChoice.value,
-          });
-        }
-      } else {
-        taskContent = generateSimpleTaskTemplate({
-          id: taskId,
-          label: title,
-          description: description || undefined,
-          type: typeChoice.value,
-          priority: priorityChoice.value,
-          status: statusChoice.value,
-        });
-      }
-
-      // Generate file name
-      const slug = slugify(title);
-      const tasksBasePath = getTasksBasePath(workspaceFolder);
-      await ensureDirectoryExists(tasksBasePath);
-
-      const fileName = generateUniqueFileName(tasksBasePath, slug, ".md");
-      const filePath = `${tasksBasePath}/${fileName}`;
-
-      // Create file
-      await createFile(filePath, taskContent);
-
-      // Show success message
-      vscode.window.showInformationMessage(`Task created: ${fileName}`);
-
-      // Refresh board if it's open
-      if (kanbanView) {
-        await kanbanView.refresh();
-      }
-    } catch (error) {
-      vscode.window.showErrorMessage(`Failed to create task: ${error}`);
     }
   });
-
-  // Register command to configure PRD base path
-  const configurePRDPathCommand = vscode.commands.registerCommand(
-    "kaiban.configurePRDPath",
-    async () => {
-      const allValidColumns = ["Backlog", "To Do", "Doing", "Testing", "Done", "Blocked"];
-      const columnsConfig = vscode.workspace.getConfiguration("kaiban.columns");
-      const prdConfig = vscode.workspace.getConfiguration("kaiban.prd");
-      const taskConfig = vscode.workspace.getConfiguration("kaiban.task");
-
-      // Show quick pick for configuration options
-      const configOption = await vscode.window.showQuickPick(
-        [
-          {
-            label: "Configure AI Providers",
-            description: "Set up API keys for Cursor, OpenAI, OpenRouter, or Replicate",
-            option: "apiKeys",
-          },
-          {
-            label: "Configure Columns",
-            description: "Select which columns to display on the Kanban board",
-            option: "columns",
-          },
-          {
-            label: "Configure PRD Base Path",
-            description: "Set the base path for PRD files",
-            option: "prd",
-          },
-          {
-            label: "Configure Task Base Path",
-            description: "Set the base path for task files",
-            option: "task",
-          },
-        ],
-        {
-          placeHolder: "Select a configuration option",
-        }
-      );
-
-      if (!configOption) return;
-
-      if (configOption.option === "apiKeys") {
-        // Configure API keys
-        await vscode.commands.executeCommand("kaiban.configureProviders");
-      } else if (configOption.option === "columns") {
-        // Configure columns
-        const currentColumns = columnsConfig.get<string[]>("enabled", [
-          "To Do",
-          "Doing",
-          "Testing",
-          "Done",
-        ]);
-
-        const columnItems = allValidColumns.map((col) => ({
-          label: col,
-          picked: currentColumns.includes(col),
-        }));
-
-        const selected = await vscode.window.showQuickPick(columnItems, {
-          placeHolder: "Select columns to display (use Ctrl/Cmd+Click to select multiple)",
-          canPickMany: true,
-        });
-
-        if (selected !== undefined) {
-          const selectedColumns = selected.map((item) => item.label);
-          if (selectedColumns.length > 0) {
-            await columnsConfig.update(
-              "enabled",
-              selectedColumns,
-              vscode.ConfigurationTarget.Workspace
-            );
-            // Manually refresh the board immediately (configuration listener may have delay)
-            await kanbanView.refresh();
-            vscode.window.showInformationMessage(`Columns updated: ${selectedColumns.join(", ")}`);
-          } else {
-            vscode.window.showWarningMessage("At least one column must be selected.");
-          }
-        }
-      } else if (configOption.option === "prd") {
-        // Configure PRD path
-        const currentPath = prdConfig.get<string>("basePath", ".agent/PRDS");
-
-        const newPath = await vscode.window.showInputBox({
-          prompt: "Enter the base path for PRD files (relative to workspace root)",
-          value: currentPath,
-          placeHolder: ".agent/PRDS",
-          validateInput: (value) => {
-            if (!value || value.trim().length === 0) {
-              return "Path cannot be empty";
-            }
-            // Remove leading/trailing slashes
-            const cleanPath = value.trim().replace(/^\/+|\/+$/g, "");
-            if (cleanPath.length === 0) {
-              return "Invalid path";
-            }
-            return null;
-          },
-        });
-
-        if (newPath !== undefined) {
-          // Clean up the path (remove leading/trailing slashes)
-          const cleanPath = newPath.trim().replace(/^\/+|\/+$/g, "");
-          await prdConfig.update("basePath", cleanPath, vscode.ConfigurationTarget.Workspace);
-          vscode.window.showInformationMessage(
-            `PRD base path updated to: ${cleanPath}. Refresh the board to apply changes.`
-          );
-        }
-      } else if (configOption.option === "task") {
-        // Configure Task path
-        const currentPath = taskConfig.get<string>("basePath", ".agent/TASKS");
-
-        const newPath = await vscode.window.showInputBox({
-          prompt: "Enter the base path for task files (relative to workspace root)",
-          value: currentPath,
-          placeHolder: ".agent/TASKS",
-          validateInput: (value) => {
-            if (!value || value.trim().length === 0) {
-              return "Path cannot be empty";
-            }
-            // Remove leading/trailing slashes
-            const cleanPath = value.trim().replace(/^\/+|\/+$/g, "");
-            if (cleanPath.length === 0) {
-              return "Invalid path";
-            }
-            return null;
-          },
-        });
-
-        if (newPath !== undefined) {
-          // Clean up the path (remove leading/trailing slashes)
-          const cleanPath = newPath.trim().replace(/^\/+|\/+$/g, "");
-          await taskConfig.update("basePath", cleanPath, vscode.ConfigurationTarget.Workspace);
-          vscode.window.showInformationMessage(
-            `Task base path updated to: ${cleanPath}. Refresh the board to apply changes.`
-          );
-        }
-      }
-    }
-  );
-
-  // Create provider registry for AI generation
-  const providerRegistry = new ProviderRegistry(apiKeyManager);
-
-  // Register adapters for provider registry
-  providerRegistry.registerAdapter(
-    new OpenRouterAdapter(() => apiKeyManager.getApiKey("openrouter"))
-  );
-  providerRegistry.registerAdapter(new OpenAIAdapter(() => apiKeyManager.getApiKey("openai")));
-  providerRegistry.registerAdapter(new CursorCloudAdapter(() => apiKeyManager.getApiKey("cursor")));
-  providerRegistry.registerAdapter(
-    new ReplicateAdapter(() => apiKeyManager.getApiKey("replicate"))
-  );
 
   context.subscriptions.push(
     showBoardCommand,
     refreshBoardCommand,
-    configureProvidersCommand,
-    setApiKeyCommand,
-    clearApiKeyCommand,
-    configurePRDPathCommand,
+    configureCommand,
     createPRDCommand,
-    createTaskCommand
+    createTaskCommand,
   );
 
   // Show welcome message
   vscode.window
     .showInformationMessage(
-      'Kaiban Markdown is ready! Use "Kaiban: Show Markdown Board" command to open.',
+      'Kaiban Board is ready! Use "Kaiban: Show Board" command to open.',
       "Open Board"
     )
     .then((selection) => {
@@ -637,7 +334,6 @@ export function activate(context: vscode.ExtensionContext) {
 
 /**
  * Check if .agent folder exists and offer to create it
- * Uses agent-folder-init skill if enabled, otherwise creates basic structure
  */
 async function checkAgentFolderInit(_context: vscode.ExtensionContext) {
   const workspaceFolder = getWorkspaceFolder();
@@ -671,7 +367,7 @@ async function checkAgentFolderInit(_context: vscode.ExtensionContext) {
       }
     }
   } else {
-    // .agent exists - check for missing subfolders (don't override existing)
+    // .agent exists - check for missing subfolders
     const missing = requiredFolders.filter((f) => !fs.existsSync(path.join(agentPath, f)));
 
     if (missing.length > 0) {
@@ -692,21 +388,24 @@ async function checkAgentFolderInit(_context: vscode.ExtensionContext) {
 }
 
 /**
- * Create basic .agent folder structure without using skills
+ * Create basic .agent folder structure
  */
-async function createBasicAgentStructure(agentPath: string, folders: string[]) {
-  // Create main .agent folder
-  fs.mkdirSync(agentPath, { recursive: true });
+async function createBasicAgentStructure(agentPath: string, folders: string[]): Promise<void> {
+  try {
+    fs.mkdirSync(agentPath, { recursive: true });
 
-  // Create subfolders
-  for (const folder of folders) {
-    fs.mkdirSync(path.join(agentPath, folder), { recursive: true });
+    for (const folder of folders) {
+      fs.mkdirSync(path.join(agentPath, folder), { recursive: true });
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to create agent folder structure: ${message}`);
   }
 
-  // Create basic CLAUDE.md file
-  const claudeMdPath = path.join(path.dirname(agentPath), "CLAUDE.md");
-  if (!fs.existsSync(claudeMdPath)) {
-    const claudeMdContent = `# ${path.basename(path.dirname(agentPath))}
+  try {
+    const claudeMdPath = path.join(path.dirname(agentPath), "CLAUDE.md");
+    if (!fs.existsSync(claudeMdPath)) {
+      const claudeMdContent = `# ${path.basename(path.dirname(agentPath))}
 
 Claude-specific entry point. Documentation in \`.agent/\`.
 
@@ -718,12 +417,11 @@ Check \`.agent/SYSTEM/RULES.md\` for coding standards.
 
 Document all work in \`.agent/SESSIONS/YYYY-MM-DD.md\` (one file per day).
 `;
-    fs.writeFileSync(claudeMdPath, claudeMdContent, "utf-8");
-  }
+      fs.writeFileSync(claudeMdPath, claudeMdContent, "utf-8");
+    }
 
-  // Create basic RULES.md
-  const rulesPath = path.join(agentPath, "SYSTEM", "RULES.md");
-  const rulesContent = `# Coding Standards
+    const rulesPath = path.join(agentPath, "SYSTEM", "RULES.md");
+    const rulesContent = `# Coding Standards
 
 ## General
 
@@ -741,11 +439,10 @@ Document all work in \`.agent/SESSIONS/YYYY-MM-DD.md\` (one file per day).
 - Document public APIs
 - Update README for major changes
 `;
-  fs.writeFileSync(rulesPath, rulesContent, "utf-8");
+    fs.writeFileSync(rulesPath, rulesContent, "utf-8");
 
-  // Create session template
-  const templatePath = path.join(agentPath, "SESSIONS", "TEMPLATE.md");
-  const templateContent = `# Sessions: YYYY-MM-DD
+    const templatePath = path.join(agentPath, "SESSIONS", "TEMPLATE.md");
+    const templateContent = `# Sessions: YYYY-MM-DD
 
 **Summary:** Brief 3-5 word summary
 
@@ -771,12 +468,6 @@ Document all work in \`.agent/SESSIONS/YYYY-MM-DD.md\` (one file per day).
   - **Context:** Why this was needed
   - **Rationale:** Why this choice
 
-### Mistakes and fixes
-
-- **Mistake:** What went wrong
-- **Fix:** How resolved
-- **Prevention:** How to avoid
-
 ### Next steps
 
 - [ ] Next task 1
@@ -786,9 +477,16 @@ Document all work in \`.agent/SESSIONS/YYYY-MM-DD.md\` (one file per day).
 
 **Total sessions today:** 1
 `;
-  fs.writeFileSync(templatePath, templateContent, "utf-8");
+    fs.writeFileSync(templatePath, templateContent, "utf-8");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`Failed to create template files: ${message}`);
+  }
 }
 
 export function deactivate() {
-  console.log("Kaiban Markdown extension deactivated");
+  if (kanbanView) {
+    kanbanView.dispose();
+  }
+  console.log("Kaiban Board extension deactivated");
 }
