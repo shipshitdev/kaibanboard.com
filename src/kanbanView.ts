@@ -15,7 +15,6 @@ export class KanbanViewProvider {
   private pollingIntervals: Map<string, NodeJS.Timeout> = new Map();
   private skipNextConfigRefresh = false;
   private quotaRefreshInterval: NodeJS.Timeout | undefined;
-  private cachedQuotaData: QuotaDisplayData | null = null;
 
   // Batch execution state
   private batchExecutionQueue: string[] = [];
@@ -228,7 +227,6 @@ export class KanbanViewProvider {
 
     try {
       const quotaData = await this.quotaService.getQuota();
-      this.cachedQuotaData = quotaData;
 
       this.panel.webview.postMessage({
         command: "claudeQuotaUpdate",
@@ -255,9 +253,24 @@ export class KanbanViewProvider {
    */
   private serializeQuotaData(data: QuotaDisplayData): {
     usage: {
-      fiveHour: { utilization: number; resetsAt: string; resetTimeFormatted: string; status: string };
-      sevenDay: { utilization: number; resetsAt: string; resetTimeFormatted: string; status: string };
-      sevenDaySonnet?: { utilization: number; resetsAt: string; resetTimeFormatted: string; status: string };
+      fiveHour: {
+        utilization: number;
+        resetsAt: string;
+        resetTimeFormatted: string;
+        status: string;
+      };
+      sevenDay: {
+        utilization: number;
+        resetsAt: string;
+        resetTimeFormatted: string;
+        status: string;
+      };
+      sevenDaySonnet?: {
+        utilization: number;
+        resetsAt: string;
+        resetTimeFormatted: string;
+        status: string;
+      };
       lastUpdated: string;
     } | null;
     error: string | null;
@@ -273,35 +286,57 @@ export class KanbanViewProvider {
       };
     }
 
-    const result: ReturnType<typeof this.serializeQuotaData> = {
-      usage: {
-        fiveHour: {
-          utilization: data.usage.fiveHour.utilization,
-          resetsAt: data.usage.fiveHour.resetsAt.toISOString(),
-          resetTimeFormatted: formatResetTime(data.usage.fiveHour.resetsAt),
-          status: getQuotaStatus(data.usage.fiveHour.utilization),
-        },
-        sevenDay: {
-          utilization: data.usage.sevenDay.utilization,
-          resetsAt: data.usage.sevenDay.resetsAt.toISOString(),
-          resetTimeFormatted: formatResetTime(data.usage.sevenDay.resetsAt),
-          status: getQuotaStatus(data.usage.sevenDay.utilization),
-        },
-        lastUpdated: data.usage.lastUpdated.toISOString(),
+    const usage: {
+      fiveHour: {
+        utilization: number;
+        resetsAt: string;
+        resetTimeFormatted: string;
+        status: string;
+      };
+      sevenDay: {
+        utilization: number;
+        resetsAt: string;
+        resetTimeFormatted: string;
+        status: string;
+      };
+      sevenDaySonnet?: {
+        utilization: number;
+        resetsAt: string;
+        resetTimeFormatted: string;
+        status: string;
+      };
+      lastUpdated: string;
+    } = {
+      fiveHour: {
+        utilization: data.usage.fiveHour.utilization,
+        resetsAt: data.usage.fiveHour.resetsAt.toISOString(),
+        resetTimeFormatted: formatResetTime(data.usage.fiveHour.resetsAt),
+        status: getQuotaStatus(data.usage.fiveHour.utilization),
       },
-      error: data.error,
-      isLoading: data.isLoading,
-      isMacOS: data.isMacOS,
+      sevenDay: {
+        utilization: data.usage.sevenDay.utilization,
+        resetsAt: data.usage.sevenDay.resetsAt.toISOString(),
+        resetTimeFormatted: formatResetTime(data.usage.sevenDay.resetsAt),
+        status: getQuotaStatus(data.usage.sevenDay.utilization),
+      },
+      lastUpdated: data.usage.lastUpdated.toISOString(),
     };
 
     if (data.usage.sevenDaySonnet) {
-      result.usage!.sevenDaySonnet = {
+      usage.sevenDaySonnet = {
         utilization: data.usage.sevenDaySonnet.utilization,
         resetsAt: data.usage.sevenDaySonnet.resetsAt.toISOString(),
         resetTimeFormatted: formatResetTime(data.usage.sevenDaySonnet.resetsAt),
         status: getQuotaStatus(data.usage.sevenDaySonnet.utilization),
       };
     }
+
+    const result: ReturnType<typeof this.serializeQuotaData> = {
+      usage,
+      error: data.error,
+      isLoading: data.isLoading,
+      isMacOS: data.isMacOS,
+    };
 
     return result;
   }

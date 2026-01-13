@@ -129,7 +129,9 @@ describe("extension", () => {
     vi.mocked(fs.writeFileSync).mockImplementation(() => undefined);
     vi.mocked(path.join).mockImplementation((...args: string[]) => args.join("/"));
     vi.mocked(path.basename).mockImplementation((p: string) => p.split("/").pop() ?? "");
-    vi.mocked(path.dirname).mockImplementation((p: string) => p.split("/").slice(0, -1).join("/") || ".");
+    vi.mocked(path.dirname).mockImplementation(
+      (p: string) => p.split("/").slice(0, -1).join("/") || "."
+    );
   });
 
   afterEach(() => {
@@ -587,7 +589,9 @@ describe("extension", () => {
     describe("createPRD command handler", () => {
       it("should show error when no workspace folder", async () => {
         activate(mockContext);
-        (vscode.workspace as { workspaceFolders: vscode.WorkspaceFolder[] | undefined }).workspaceFolders = undefined;
+        (
+          vscode.workspace as { workspaceFolders: vscode.WorkspaceFolder[] | undefined }
+        ).workspaceFolders = undefined;
 
         const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
           (call) => call[0] === "kaiban.createPRD"
@@ -604,7 +608,9 @@ describe("extension", () => {
         const mockWorkspaceFolder = {
           uri: { fsPath: "/workspace" },
         } as vscode.WorkspaceFolder;
-        (vscode.workspace as { workspaceFolders: vscode.WorkspaceFolder[] | undefined }).workspaceFolders = [mockWorkspaceFolder];
+        (
+          vscode.workspace as { workspaceFolders: vscode.WorkspaceFolder[] | undefined }
+        ).workspaceFolders = [mockWorkspaceFolder];
         vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
           get: vi.fn().mockImplementation((key: string, defaultValue?: unknown) => {
             if (key === "claude.executablePath") return "claude";
@@ -617,7 +623,9 @@ describe("extension", () => {
           show: vi.fn(),
           sendText: vi.fn(),
         };
-        vi.mocked(vscode.window.createTerminal).mockReturnValue(mockTerminal as unknown as vscode.Terminal);
+        vi.mocked(vscode.window.createTerminal).mockReturnValue(
+          mockTerminal as unknown as vscode.Terminal
+        );
 
         const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
           (call) => call[0] === "kaiban.createPRD"
@@ -642,7 +650,9 @@ describe("extension", () => {
         const mockWorkspaceFolder = {
           uri: { fsPath: "/workspace" },
         } as vscode.WorkspaceFolder;
-        (vscode.workspace as { workspaceFolders: vscode.WorkspaceFolder[] | undefined }).workspaceFolders = [mockWorkspaceFolder];
+        (
+          vscode.workspace as { workspaceFolders: vscode.WorkspaceFolder[] | undefined }
+        ).workspaceFolders = [mockWorkspaceFolder];
         vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
           get: vi.fn().mockImplementation((key: string, defaultValue?: unknown) => {
             if (key === "claude.executablePath") return "claude";
@@ -671,7 +681,9 @@ describe("extension", () => {
     describe("createTask command handler", () => {
       it("should show error when no workspace folder", async () => {
         activate(mockContext);
-        (vscode.workspace as { workspaceFolders: vscode.WorkspaceFolder[] | undefined }).workspaceFolders = undefined;
+        (
+          vscode.workspace as { workspaceFolders: vscode.WorkspaceFolder[] | undefined }
+        ).workspaceFolders = undefined;
 
         const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
           (call) => call[0] === "kaiban.createTask"
@@ -688,7 +700,9 @@ describe("extension", () => {
         const mockWorkspaceFolder = {
           uri: { fsPath: "/workspace" },
         } as vscode.WorkspaceFolder;
-        (vscode.workspace as { workspaceFolders: vscode.WorkspaceFolder[] | undefined }).workspaceFolders = [mockWorkspaceFolder];
+        (
+          vscode.workspace as { workspaceFolders: vscode.WorkspaceFolder[] | undefined }
+        ).workspaceFolders = [mockWorkspaceFolder];
         vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
           get: vi.fn().mockImplementation((key: string, defaultValue?: unknown) => {
             if (key === "claude.executablePath") return "claude";
@@ -701,7 +715,9 @@ describe("extension", () => {
           show: vi.fn(),
           sendText: vi.fn(),
         };
-        vi.mocked(vscode.window.createTerminal).mockReturnValue(mockTerminal as unknown as vscode.Terminal);
+        vi.mocked(vscode.window.createTerminal).mockReturnValue(
+          mockTerminal as unknown as vscode.Terminal
+        );
 
         const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
           (call) => call[0] === "kaiban.createTask"
@@ -726,7 +742,9 @@ describe("extension", () => {
         const mockWorkspaceFolder = {
           uri: { fsPath: "/workspace" },
         } as vscode.WorkspaceFolder;
-        (vscode.workspace as { workspaceFolders: vscode.WorkspaceFolder[] | undefined }).workspaceFolders = [mockWorkspaceFolder];
+        (
+          vscode.workspace as { workspaceFolders: vscode.WorkspaceFolder[] | undefined }
+        ).workspaceFolders = [mockWorkspaceFolder];
         vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
           get: vi.fn().mockImplementation((key: string, defaultValue?: unknown) => {
             if (key === "claude.executablePath") return "claude";
@@ -754,7 +772,9 @@ describe("extension", () => {
 
     describe("checkAgentFolderInit", () => {
       it("should return early when no workspace folder", async () => {
-        (vscode.workspace as { workspaceFolders: vscode.WorkspaceFolder[] | undefined }).workspaceFolders = undefined;
+        (
+          vscode.workspace as { workspaceFolders: vscode.WorkspaceFolder[] | undefined }
+        ).workspaceFolders = undefined;
         activate(mockContext);
         await new Promise((resolve) => setTimeout(resolve, 0));
         expect(fs.existsSync).not.toHaveBeenCalled();
@@ -764,7 +784,9 @@ describe("extension", () => {
         const mockWorkspaceFolder = {
           uri: { fsPath: "/workspace" },
         } as vscode.WorkspaceFolder;
-        (vscode.workspace as { workspaceFolders: vscode.WorkspaceFolder[] | undefined }).workspaceFolders = [mockWorkspaceFolder];
+        (
+          vscode.workspace as { workspaceFolders: vscode.WorkspaceFolder[] | undefined }
+        ).workspaceFolders = [mockWorkspaceFolder];
         vi.mocked(fs.existsSync).mockReturnValue(false);
         (vscode.window.showInformationMessage as Mock).mockResolvedValue("Initialize");
 
@@ -782,9 +804,15 @@ describe("extension", () => {
         const mockWorkspaceFolder = {
           uri: { fsPath: "/workspace" },
         } as vscode.WorkspaceFolder;
-        (vscode.workspace as { workspaceFolders: vscode.WorkspaceFolder[] | undefined }).workspaceFolders = [mockWorkspaceFolder];
+        (
+          vscode.workspace as { workspaceFolders: vscode.WorkspaceFolder[] | undefined }
+        ).workspaceFolders = [mockWorkspaceFolder];
         vi.mocked(fs.existsSync).mockReturnValue(false);
-        mockGetSettings.mockReturnValue({ useAgentFolderInit: false, useTaskPrdCreator: false, useSessionDocumenter: false });
+        mockGetSettings.mockReturnValue({
+          useAgentFolderInit: false,
+          useTaskPrdCreator: false,
+          useSessionDocumenter: false,
+        });
         (vscode.window.showInformationMessage as Mock).mockResolvedValue("Initialize");
 
         activate(mockContext);
@@ -800,9 +828,15 @@ describe("extension", () => {
         const mockWorkspaceFolder = {
           uri: { fsPath: "/workspace" },
         } as vscode.WorkspaceFolder;
-        (vscode.workspace as { workspaceFolders: vscode.WorkspaceFolder[] | undefined }).workspaceFolders = [mockWorkspaceFolder];
+        (
+          vscode.workspace as { workspaceFolders: vscode.WorkspaceFolder[] | undefined }
+        ).workspaceFolders = [mockWorkspaceFolder];
         vi.mocked(fs.existsSync).mockReturnValue(false);
-        mockGetSettings.mockReturnValue({ useAgentFolderInit: true, useTaskPrdCreator: false, useSessionDocumenter: false });
+        mockGetSettings.mockReturnValue({
+          useAgentFolderInit: true,
+          useTaskPrdCreator: false,
+          useSessionDocumenter: false,
+        });
         (vscode.window.showInformationMessage as Mock).mockResolvedValue("Initialize");
 
         activate(mockContext);
@@ -818,7 +852,9 @@ describe("extension", () => {
         const mockWorkspaceFolder = {
           uri: { fsPath: "/workspace" },
         } as vscode.WorkspaceFolder;
-        (vscode.workspace as { workspaceFolders: vscode.WorkspaceFolder[] | undefined }).workspaceFolders = [mockWorkspaceFolder];
+        (
+          vscode.workspace as { workspaceFolders: vscode.WorkspaceFolder[] | undefined }
+        ).workspaceFolders = [mockWorkspaceFolder];
         vi.mocked(fs.existsSync).mockReturnValue(false);
         (vscode.window.showInformationMessage as Mock).mockResolvedValue("Skip");
 
@@ -833,9 +869,11 @@ describe("extension", () => {
         const mockWorkspaceFolder = {
           uri: { fsPath: "/workspace" },
         } as vscode.WorkspaceFolder;
-        (vscode.workspace as { workspaceFolders: vscode.WorkspaceFolder[] | undefined }).workspaceFolders = [mockWorkspaceFolder];
+        (
+          vscode.workspace as { workspaceFolders: vscode.WorkspaceFolder[] | undefined }
+        ).workspaceFolders = [mockWorkspaceFolder];
         vi.mocked(fs.existsSync).mockImplementation((p: string | Buffer | URL) => {
-          const pathStr = typeof p === 'string' ? p : p.toString();
+          const pathStr = typeof p === "string" ? p : p.toString();
           if (pathStr === "/workspace/.agent") return true;
           if (pathStr === "/workspace/.agent/TASKS") return false;
           return true;
@@ -856,9 +894,11 @@ describe("extension", () => {
         const mockWorkspaceFolder = {
           uri: { fsPath: "/workspace" },
         } as vscode.WorkspaceFolder;
-        (vscode.workspace as { workspaceFolders: vscode.WorkspaceFolder[] | undefined }).workspaceFolders = [mockWorkspaceFolder];
+        (
+          vscode.workspace as { workspaceFolders: vscode.WorkspaceFolder[] | undefined }
+        ).workspaceFolders = [mockWorkspaceFolder];
         vi.mocked(fs.existsSync).mockImplementation((p: string | Buffer | URL) => {
-          const pathStr = typeof p === 'string' ? p : p.toString();
+          const pathStr = typeof p === "string" ? p : p.toString();
           if (pathStr === "/workspace/.agent") return true;
           if (pathStr === "/workspace/.agent/TASKS") return false;
           return true;

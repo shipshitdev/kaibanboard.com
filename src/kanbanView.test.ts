@@ -206,7 +206,6 @@ describe("KanbanViewProvider", () => {
       await provider.show();
     });
 
-
     describe("openTask command", () => {
       it("should open task file successfully", async () => {
         (vscode.workspace.openTextDocument as Mock).mockResolvedValue({});
@@ -709,7 +708,6 @@ describe("KanbanViewProvider", () => {
         );
       });
     });
-
   });
 
   describe("renderMarkdown (via loadPRD)", () => {
@@ -1041,7 +1039,6 @@ describe("KanbanViewProvider", () => {
       expect(mockWebview.html).not.toContain("[Done]");
       expect(mockWebview.html).toContain("completed");
     });
-
   });
 
   describe("escapeHtml", () => {

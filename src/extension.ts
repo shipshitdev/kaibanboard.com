@@ -3,11 +3,7 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import { KanbanViewProvider } from "./kanbanView";
 import { SkillService } from "./services/skillService";
-import {
-  getPRDBasePath,
-  getTasksBasePath,
-  getWorkspaceFolder,
-} from "./utils/fileUtils";
+import { getPRDBasePath, getTasksBasePath, getWorkspaceFolder } from "./utils/fileUtils";
 
 let kanbanView: KanbanViewProvider;
 
@@ -107,7 +103,9 @@ Important: Create the directory if it doesn't exist. Use a kebab-case filename b
       terminal.show();
       terminal.sendText(fullCommand);
 
-      vscode.window.showInformationMessage("Claude CLI opened - follow the prompts to create your PRD");
+      vscode.window.showInformationMessage(
+        "Claude CLI opened - follow the prompts to create your PRD"
+      );
     } catch (error) {
       vscode.window.showErrorMessage(`Failed to start PRD creation: ${error}`);
     }
@@ -178,7 +176,9 @@ Important: Create the directory if it doesn't exist. Use a kebab-case filename b
       terminal.show();
       terminal.sendText(fullCommand);
 
-      vscode.window.showInformationMessage("Claude CLI opened - follow the prompts to create your task");
+      vscode.window.showInformationMessage(
+        "Claude CLI opened - follow the prompts to create your task"
+      );
     } catch (error) {
       vscode.window.showErrorMessage(`Failed to start task creation: ${error}`);
     }
@@ -313,7 +313,7 @@ Important: Create the directory if it doesn't exist. Use a kebab-case filename b
     refreshBoardCommand,
     configureCommand,
     createPRDCommand,
-    createTaskCommand,
+    createTaskCommand
   );
 
   // Show welcome message
