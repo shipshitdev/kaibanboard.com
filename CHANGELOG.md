@@ -7,9 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2025-01-13
+
 ### Added
-- Screenshot generation script for README documentation
-- Improved README with logo, badges, and screenshot
+- Enhanced README documentation with comprehensive Ralph Wiggum Loop explanation
+- Added link to [Ralph Wiggum plugin repository](https://github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum)
+
+### Changed
+- Clarified that tasks can be executed directly from the kanban board in README
+- Improved documentation of autonomous iterative execution features
+- Reduced test coverage thresholds to 55% for more realistic CI/CD requirements
+- Updated git hooks: pre-commit now runs linters only (via lint-staged), pre-push no longer runs tests
+
+### Fixed
+- Fixed TypeScript type error in test mocks for fs.existsSync
+- Removed unused cachedQuotaData variable in kanbanView.ts
+- Fixed non-null assertion linting error in quota serialization
 
 ## [0.2.1] - 2025-01-12
 

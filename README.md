@@ -58,8 +58,8 @@
 | **Multi-Workspace** | Aggregates tasks from all workspace folders |
 | **Drag & Drop** | Reorder tasks within columns, order persists to files |
 | **Priority Sorting** | Smart sorting by custom order, then by priority |
-| **Claude CLI Execution** | Execute tasks with Claude Code directly from the board |
-| **Ralph Loop Support** | Optional integration with ralph-loop plugin for iterative execution |
+| **Direct Task Execution** | Execute tasks with Claude Code directly from the kanban board - just click ▶ |
+| **Ralph Wiggum Loop** | Optional integration with [ralph-wiggum plugin](https://github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum) for autonomous iterative execution |
 | **Theme Support** | Adapts to Cursor's dark/light theme |
 | **Real-time Refresh** | Board updates when task files change |
 
@@ -148,23 +148,32 @@ Add any additional details here.
 
 ### Task Execution
 
-Tasks are executed via Claude CLI directly from the board.
+**Execute tasks directly from the kanban board** - no need to open files or run commands manually. Simply click the ▶ button on any task card to start execution.
 
 #### Basic Execution
 
-1. Click ▶ on any task in To Do, Doing, or Testing
+1. Click ▶ on any task in To Do, Doing, or Testing columns
 2. A new terminal opens with Claude Code
 3. Claude reads the task file and implements it
 4. Task status automatically updates when complete
 
-#### With Ralph Loop (Optional)
+#### With Ralph Wiggum Loop (Autonomous Iterative Execution)
 
-For iterative execution with automatic validation:
+[Ralph Wiggum](https://github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum) is a Claude Code plugin that enables **autonomous, iterative development**. Instead of single-pass execution, Ralph Loop enables Claude to:
 
-1. Enable in settings: `kaiban.claude.useRalphLoop: true`
-2. Install the ralph-loop plugin in Claude Code
-3. Click ▶ on any task
-4. Claude will work iteratively until the completion promise is met
+- Work iteratively on complex tasks
+- Review and validate its own output
+- Fix issues and improve implementation in multiple passes
+- Continue until completion criteria are met or max iterations reached
+
+**To use Ralph Wiggum Loop:**
+
+1. Install the plugin in Claude Code: `/plugin install ralph-wiggum`
+2. Enable in settings: `kaiban.claude.useRalphLoop: true`
+3. Click ▶ on any task card in the board
+4. Claude will work iteratively, automatically reviewing and improving until the task is complete
+
+Ralph Loop is particularly useful for complex tasks that require multiple steps, testing, and refinement. The extension automatically includes your PRD content for full context.
 
 ## Project Structure
 
@@ -222,7 +231,7 @@ See [DEVELOPMENT.md](./DEVELOPMENT.md) for complete development guide.
 
 ### Optional
 
-- **Ralph Loop Plugin**: For iterative task execution
+- **[Ralph Wiggum Plugin](https://github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum)**: For autonomous iterative task execution with self-review and refinement
 
 ## License
 
