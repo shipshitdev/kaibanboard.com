@@ -191,6 +191,7 @@
     "prepare": "husky",
     "pretest": "bun run compile",
     "screenshot": "bun run scripts/generate-screenshot.ts",
+    "social-preview": "bun run scripts/generate-social-preview.ts",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:ui": "vitest --ui",
