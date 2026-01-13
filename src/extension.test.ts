@@ -256,7 +256,7 @@ describe("extension", () => {
         const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
           (call) => call[0] === "kaiban.showBoard"
         );
-        const handler = registerCommandCall[1];
+        const handler = registerCommandCall?.[1];
 
         await handler();
 
@@ -272,7 +272,7 @@ describe("extension", () => {
         const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
           (call) => call[0] === "kaiban.showBoard"
         );
-        const handler = registerCommandCall[1];
+        const handler = registerCommandCall?.[1];
 
         await handler();
 
@@ -292,7 +292,7 @@ describe("extension", () => {
         const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
           (call) => call[0] === "kaiban.refreshBoard"
         );
-        const handler = registerCommandCall[1];
+        const handler = registerCommandCall?.[1];
 
         await handler();
 
@@ -309,7 +309,7 @@ describe("extension", () => {
         const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
           (call) => call[0] === "kaiban.refreshBoard"
         );
-        const handler = registerCommandCall[1];
+        const handler = registerCommandCall?.[1];
 
         await handler();
 
@@ -327,7 +327,7 @@ describe("extension", () => {
         const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
           (call) => call[0] === "kaiban.configure"
         );
-        const handler = registerCommandCall[1];
+        const handler = registerCommandCall?.[1];
 
         await handler();
 
@@ -361,7 +361,7 @@ describe("extension", () => {
         const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
           (call) => call[0] === "kaiban.configure"
         );
-        const handler = registerCommandCall[1];
+        const handler = registerCommandCall?.[1];
 
         await handler();
 
@@ -399,7 +399,7 @@ describe("extension", () => {
         const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
           (call) => call[0] === "kaiban.configure"
         );
-        const handler = registerCommandCall[1];
+        const handler = registerCommandCall?.[1];
 
         await handler();
 
@@ -429,7 +429,7 @@ describe("extension", () => {
         const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
           (call) => call[0] === "kaiban.configure"
         );
-        const handler = registerCommandCall[1];
+        const handler = registerCommandCall?.[1];
 
         await handler();
 
@@ -462,7 +462,7 @@ describe("extension", () => {
         const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
           (call) => call[0] === "kaiban.configure"
         );
-        const handler = registerCommandCall[1];
+        const handler = registerCommandCall?.[1];
 
         await handler();
 
@@ -507,7 +507,7 @@ describe("extension", () => {
         const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
           (call) => call[0] === "kaiban.configure"
         );
-        const handler = registerCommandCall[1];
+        const handler = registerCommandCall?.[1];
 
         await handler();
 
@@ -538,7 +538,7 @@ describe("extension", () => {
         const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
           (call) => call[0] === "kaiban.configure"
         );
-        const handler = registerCommandCall[1];
+        const handler = registerCommandCall?.[1];
 
         await handler();
 
@@ -576,7 +576,7 @@ describe("extension", () => {
         const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
           (call) => call[0] === "kaiban.configure"
         );
-        const handler = registerCommandCall[1];
+        const handler = registerCommandCall?.[1];
 
         await handler();
 
@@ -592,7 +592,7 @@ describe("extension", () => {
         const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
           (call) => call[0] === "kaiban.createPRD"
         );
-        const handler = registerCommandCall[1];
+        const handler = registerCommandCall?.[1];
 
         await handler();
 
@@ -622,7 +622,7 @@ describe("extension", () => {
         const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
           (call) => call[0] === "kaiban.createPRD"
         );
-        const handler = registerCommandCall[1];
+        const handler = registerCommandCall?.[1];
 
         await handler();
 
@@ -658,7 +658,7 @@ describe("extension", () => {
         const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
           (call) => call[0] === "kaiban.createPRD"
         );
-        const handler = registerCommandCall[1];
+        const handler = registerCommandCall?.[1];
 
         await handler();
 
@@ -676,7 +676,7 @@ describe("extension", () => {
         const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
           (call) => call[0] === "kaiban.createTask"
         );
-        const handler = registerCommandCall[1];
+        const handler = registerCommandCall?.[1];
 
         await handler();
 
@@ -706,7 +706,7 @@ describe("extension", () => {
         const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
           (call) => call[0] === "kaiban.createTask"
         );
-        const handler = registerCommandCall[1];
+        const handler = registerCommandCall?.[1];
 
         await handler();
 
@@ -742,7 +742,7 @@ describe("extension", () => {
         const registerCommandCall = (vscode.commands.registerCommand as Mock).mock.calls.find(
           (call) => call[0] === "kaiban.createTask"
         );
-        const handler = registerCommandCall[1];
+        const handler = registerCommandCall?.[1];
 
         await handler();
 
@@ -834,9 +834,10 @@ describe("extension", () => {
           uri: { fsPath: "/workspace" },
         } as vscode.WorkspaceFolder;
         (vscode.workspace as { workspaceFolders: vscode.WorkspaceFolder[] | undefined }).workspaceFolders = [mockWorkspaceFolder];
-        vi.mocked(fs.existsSync).mockImplementation((p: string) => {
-          if (p === "/workspace/.agent") return true;
-          if (p === "/workspace/.agent/TASKS") return false;
+        vi.mocked(fs.existsSync).mockImplementation((p: string | Buffer | URL) => {
+          const pathStr = typeof p === 'string' ? p : p.toString();
+          if (pathStr === "/workspace/.agent") return true;
+          if (pathStr === "/workspace/.agent/TASKS") return false;
           return true;
         });
         (vscode.window.showInformationMessage as Mock).mockResolvedValue("Create");
@@ -856,9 +857,10 @@ describe("extension", () => {
           uri: { fsPath: "/workspace" },
         } as vscode.WorkspaceFolder;
         (vscode.workspace as { workspaceFolders: vscode.WorkspaceFolder[] | undefined }).workspaceFolders = [mockWorkspaceFolder];
-        vi.mocked(fs.existsSync).mockImplementation((p: string) => {
-          if (p === "/workspace/.agent") return true;
-          if (p === "/workspace/.agent/TASKS") return false;
+        vi.mocked(fs.existsSync).mockImplementation((p: string | Buffer | URL) => {
+          const pathStr = typeof p === 'string' ? p : p.toString();
+          if (pathStr === "/workspace/.agent") return true;
+          if (pathStr === "/workspace/.agent/TASKS") return false;
           return true;
         });
         (vscode.window.showInformationMessage as Mock).mockResolvedValue("Create");
