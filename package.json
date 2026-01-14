@@ -33,23 +33,6 @@
     ],
     "configuration": {
       "properties": {
-        "kaiban.cli.defaultProvider": {
-          "default": "auto",
-          "description": "Default CLI provider for task execution. Use 'auto' to automatically select the first available CLI.",
-          "enum": [
-            "auto",
-            "claude",
-            "codex",
-            "cursor"
-          ],
-          "enumDescriptions": [
-            "Automatically select the first available CLI (Claude > Codex > Cursor)",
-            "Use Claude CLI (claude command)",
-            "Use Codex CLI (codex command)",
-            "Use Cursor CLI (cursor command)"
-          ],
-          "type": "string"
-        },
         "kaiban.claude.additionalFlags": {
           "default": "",
           "description": "Additional flags to pass to Claude CLI (e.g., --dangerously-skip-permissions)",
@@ -77,6 +60,23 @@
           "description": "Use /ralph-loop plugin if available. When false, runs Claude directly with the task.",
           "type": "boolean"
         },
+        "kaiban.cli.defaultProvider": {
+          "default": "auto",
+          "description": "Default CLI provider for task execution. Use 'auto' to automatically select the first available CLI.",
+          "enum": [
+            "auto",
+            "claude",
+            "codex",
+            "cursor"
+          ],
+          "enumDescriptions": [
+            "Automatically select the first available CLI (Claude > Codex > Cursor)",
+            "Use Claude CLI (claude command)",
+            "Use Codex CLI (codex command)",
+            "Use Cursor CLI (cursor command)"
+          ],
+          "type": "string"
+        },
         "kaiban.codex.additionalFlags": {
           "default": "",
           "description": "Additional flags to pass to Codex CLI",
@@ -90,21 +90,6 @@
         "kaiban.codex.promptTemplate": {
           "default": "Read the task file at {taskFile} and implement it. The task contains a link to the PRD with full requirements. Update the task status to Done when complete.",
           "description": "Prompt template for Codex execution. Use {taskFile} for the task file path.",
-          "type": "string"
-        },
-        "kaiban.cursor.additionalFlags": {
-          "default": "",
-          "description": "Additional flags to pass to Cursor CLI",
-          "type": "string"
-        },
-        "kaiban.cursor.executablePath": {
-          "default": "cursor",
-          "description": "Path to Cursor CLI executable",
-          "type": "string"
-        },
-        "kaiban.cursor.promptTemplate": {
-          "default": "Read the task file at {taskFile} and implement it. The task contains a link to the PRD with full requirements. Update the task status to Done when complete.",
-          "description": "Prompt template for Cursor execution. Use {taskFile} for the task file path.",
           "type": "string"
         },
         "kaiban.columns.enabled": {
@@ -127,6 +112,21 @@
             "type": "string"
           },
           "type": "array"
+        },
+        "kaiban.cursor.additionalFlags": {
+          "default": "",
+          "description": "Additional flags to pass to Cursor CLI",
+          "type": "string"
+        },
+        "kaiban.cursor.executablePath": {
+          "default": "cursor",
+          "description": "Path to Cursor CLI executable",
+          "type": "string"
+        },
+        "kaiban.cursor.promptTemplate": {
+          "default": "Read the task file at {taskFile} and implement it. The task contains a link to the PRD with full requirements. Update the task status to Done when complete.",
+          "description": "Prompt template for Cursor execution. Use {taskFile} for the task file path.",
+          "type": "string"
         },
         "kaiban.prd.basePath": {
           "default": ".agent/PRDS",
@@ -187,7 +187,7 @@
   "description": "Kanban board for Claude CLI task management. Execute markdown tasks via Claude Code directly from your board.",
   "devDependencies": {
     "@biomejs/biome": "2.3.11",
-    "@types/node": "25.0.6",
+    "@types/node": "25.0.8",
     "@types/vscode": "1.105.0",
     "@vitest/coverage-v8": "4.0.17",
     "@vitest/ui": "4.0.17",
@@ -232,8 +232,8 @@
     "format": "biome format --write src/",
     "format:check": "biome format src/",
     "lint": "biome lint src/",
-    "lint:fix": "biome lint --write src/",
     "lint-staged": "lint-staged",
+    "lint:fix": "biome lint --write src/",
     "package": "bun run compile && mkdir -p build && vsce package --no-dependencies --out build/",
     "pre:install": "bun update --latest --recursive && bun add -D @types/vscode@1.105.0",
     "prepare": "husky",
