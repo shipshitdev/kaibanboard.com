@@ -1600,3 +1600,7 @@ function startRateLimitCountdown(taskId, waitSeconds) {
         // ============ End PRD Edit Message Handlers ============
       }
     });
+
+    // Request initial data now that message listener is ready
+    vscode.postMessage({ command: 'getClaudeQuota' });
+    vscode.postMessage({ command: 'getCLIStatus' });

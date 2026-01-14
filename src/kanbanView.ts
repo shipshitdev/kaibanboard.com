@@ -1,10 +1,13 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { ClaudeCodeQuotaService } from "./services/claudeCodeQuotaService";
+import { CLIDetectionService } from "./services/cliDetectionService";
 import { SkillService } from "./services/skillService";
 import { type Task, TaskParser } from "./taskParser";
 import type { QuotaDisplayData } from "./types/claudeQuota";
 import { formatResetTime, getQuotaStatus } from "./types/claudeQuota";
+import type { CLIAvailabilityStatus, CLIProviderName, CLISelectionMode } from "./types/cli";
+import { getCLIDisplayName } from "./types/cli";
 import { Icons } from "./utils/lucideIcons";
 
 export class KanbanViewProvider {
@@ -12,9 +15,11 @@ export class KanbanViewProvider {
   private taskParser: TaskParser;
   private skillService: SkillService;
   private quotaService: ClaudeCodeQuotaService;
+  private cliDetectionService: CLIDetectionService;
   private pollingIntervals: Map<string, NodeJS.Timeout> = new Map();
   private skipNextConfigRefresh = false;
   private quotaRefreshInterval: NodeJS.Timeout | undefined;
+  private cachedCLIStatus: CLIAvailabilityStatus | null = null;
 
   // Batch execution state
   private batchExecutionQueue: string[] = [];
@@ -28,6 +33,7 @@ export class KanbanViewProvider {
     this.taskParser = new TaskParser();
     this.skillService = new SkillService();
     this.quotaService = new ClaudeCodeQuotaService();
+    this.cliDetectionService = new CLIDetectionService();
 
     // Listen for configuration changes to auto-refresh board
     vscode.workspace.onDidChangeConfiguration(
@@ -184,6 +190,15 @@ export class KanbanViewProvider {
           case "refreshClaudeQuota":
             await this.handleRefreshClaudeQuota();
             break;
+          case "getCLIStatus":
+            await this.handleGetCLIStatus();
+            break;
+          case "refreshCLIStatus":
+            await this.handleRefreshCLIStatus();
+            break;
+          case "executeViaCLI":
+            await this.handleExecuteViaCLI(message.taskId, message.cliProvider);
+            break;
         }
       },
       undefined,
@@ -195,8 +210,7 @@ export class KanbanViewProvider {
     // Start quota auto-refresh (every 5 minutes)
     this.startQuotaAutoRefresh();
 
-    // Initial quota fetch
-    await this.handleGetClaudeQuota();
+    // Note: Initial quota and CLI status are requested by webview when ready (avoids race condition)
   }
 
   /**
@@ -339,6 +353,161 @@ export class KanbanViewProvider {
     };
 
     return result;
+  }
+
+  /**
+   * Handle get CLI status request
+   */
+  private async handleGetCLIStatus(): Promise<void> {
+    if (!this.panel) return;
+
+    try {
+      const config = vscode.workspace.getConfiguration("kaiban");
+      const selectionMode = config.get<CLISelectionMode>("cli.defaultProvider", "auto");
+
+      const status = await this.cliDetectionService.getCLIAvailabilityStatus(selectionMode);
+      this.cachedCLIStatus = status;
+
+      this.panel.webview.postMessage({
+        command: "cliStatusUpdate",
+        data: status,
+      });
+    } catch (error) {
+      this.panel.webview.postMessage({
+        command: "cliStatusError",
+        error: String(error),
+      });
+    }
+  }
+
+  /**
+   * Handle manual refresh of CLI status
+   */
+  private async handleRefreshCLIStatus(): Promise<void> {
+    this.cliDetectionService.clearCache();
+    await this.handleGetCLIStatus();
+  }
+
+  /**
+   * Execute task via specified CLI or auto-selected CLI
+   */
+  private async handleExecuteViaCLI(taskId: string, cliProvider?: CLIProviderName): Promise<void> {
+    try {
+      // Check if task is already running
+      if (this.claudeTerminals.has(taskId)) {
+        vscode.window.showWarningMessage(
+          "Task is already running. Stop it first before starting again."
+        );
+        return;
+      }
+
+      const tasks = await this.taskParser.parseTasks();
+      const task = tasks.find((t) => t.id === taskId);
+
+      if (!task) {
+        throw new Error(`Task ${taskId} not found`);
+      }
+
+      // Get CLI status and selected provider
+      const config = vscode.workspace.getConfiguration("kaiban");
+      const selectionMode = config.get<CLISelectionMode>("cli.defaultProvider", "auto");
+      const status =
+        this.cachedCLIStatus ||
+        (await this.cliDetectionService.getCLIAvailabilityStatus(selectionMode));
+
+      // Determine which CLI to use
+      let selectedCLI: CLIProviderName | null = cliProvider || null;
+
+      if (!selectedCLI) {
+        if (!status.hasAvailableCLI || !status.selectedProvider) {
+          throw new Error("No CLI available. Install Claude CLI, Codex CLI, or Cursor CLI.");
+        }
+        selectedCLI = status.selectedProvider;
+      }
+
+      // Verify the selected CLI is available
+      const cliResult = status.clis.find((c) => c.name === selectedCLI);
+      if (!cliResult?.available) {
+        throw new Error(`${getCLIDisplayName(selectedCLI)} is not available`);
+      }
+
+      // Get CLI-specific configuration
+      const cliConfig = this.cliDetectionService.getCLIConfig(selectedCLI, {
+        get: <T>(key: string, defaultValue: T) => config.get<T>(key, defaultValue),
+      });
+
+      // Build the command
+      const taskInstruction = cliConfig.promptTemplate.replace("{taskFile}", task.filePath);
+      const flags = cliConfig.additionalFlags ? `${cliConfig.additionalFlags} ` : "";
+
+      // For Claude, check if we should use ralph-loop
+      let fullCommand: string;
+      if (selectedCLI === "claude") {
+        const useRalphLoop = config.get<boolean>("claude.useRalphLoop", false);
+        const ralphCommand = config.get<string>("ralph.command", "/ralph-loop:ralph-loop");
+        const maxIterations = config.get<number>("ralph.maxIterations", 5);
+        const completionPromise = config.get<string>("ralph.completionPromise", "TASK COMPLETE");
+
+        if (useRalphLoop) {
+          const ralphCmd = `${ralphCommand} "${taskInstruction}" --completion-promise "${completionPromise}" --max-iterations ${maxIterations}`;
+          fullCommand = `${cliConfig.executablePath} ${flags}"${ralphCmd}"`;
+        } else {
+          fullCommand = `${cliConfig.executablePath} ${flags}"${taskInstruction}"`;
+        }
+      } else {
+        // For Codex and Cursor, use simple command format
+        fullCommand = `${cliConfig.executablePath} ${flags}"${taskInstruction}"`;
+      }
+
+      // Get workspace folder
+      const workspaceFolders = vscode.workspace.workspaceFolders;
+      const cwd = workspaceFolders?.[0]?.uri.fsPath;
+
+      // Create terminal
+      const terminalName = `${getCLIDisplayName(selectedCLI)}: ${task.label.substring(0, 20)}`;
+      const terminal = vscode.window.createTerminal({
+        name: terminalName,
+        cwd: cwd,
+      });
+
+      // Store terminal reference
+      this.claudeTerminals.set(taskId, terminal);
+
+      terminal.show();
+      terminal.sendText(fullCommand);
+
+      // Update task status to Doing
+      await this.taskParser.updateTaskStatus(taskId, "Doing");
+
+      // Notify user
+      vscode.window.showInformationMessage(
+        `Executing via ${getCLIDisplayName(selectedCLI)}: ${task.label}`
+      );
+
+      // Notify webview
+      if (this.panel) {
+        this.panel.webview.postMessage({
+          command: "claudeExecutionStarted",
+          taskId,
+          cliProvider: selectedCLI,
+        });
+      }
+
+      // Set up completion tracking
+      this.watchForCompletion(taskId);
+
+      // Refresh board to show updated status
+      await this.refresh();
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to execute task: ${error}`);
+      if (this.panel) {
+        this.panel.webview.postMessage({
+          command: "claudeExecutionError",
+          taskId,
+          error: String(error),
+        });
+      }
+    }
   }
 
   public async refresh() {
@@ -946,98 +1115,13 @@ Implementation details and considerations.
   private completionWatchers: Map<string, vscode.FileSystemWatcher> = new Map();
   private completionPollers: Map<string, NodeJS.Timeout> = new Map();
 
+  /**
+   * Execute task via CLI (backward compatibility - delegates to handleExecuteViaCLI)
+   * Uses the configured default CLI provider or auto-detects
+   */
   private async handleExecuteViaClaude(taskId: string) {
-    try {
-      // Check if task is already running to prevent duplicate execution
-      if (this.claudeTerminals.has(taskId)) {
-        vscode.window.showWarningMessage(
-          `Task is already running. Stop it first before starting again.`
-        );
-        return;
-      }
-
-      const tasks = await this.taskParser.parseTasks();
-      const task = tasks.find((t) => t.id === taskId);
-
-      if (!task) {
-        throw new Error(`Task ${taskId} not found`);
-      }
-
-      // Get configuration
-      const config = vscode.workspace.getConfiguration("kaiban");
-      const claudePath = config.get<string>("claude.executablePath", "claude");
-      const additionalFlags = config.get<string>("claude.additionalFlags", "");
-      const useRalphLoop = config.get<boolean>("claude.useRalphLoop", false);
-      const promptTemplate = config.get<string>(
-        "claude.promptTemplate",
-        "Read the task file at {taskFile} and implement it. The task contains a link to the PRD with full requirements. Update the task status to Testing when complete."
-      );
-      const ralphCommand = config.get<string>("ralph.command", "/ralph-loop:ralph-loop");
-      const maxIterations = config.get<number>("ralph.maxIterations", 5);
-      const completionPromise = config.get<string>("ralph.completionPromise", "TASK COMPLETE");
-
-      // Build task instruction from template
-      const taskInstruction = promptTemplate.replace("{taskFile}", task.filePath);
-
-      // Build the command based on whether to use ralph-loop
-      const flags = additionalFlags ? `${additionalFlags} ` : "";
-      let fullCommand: string;
-
-      if (useRalphLoop) {
-        // Use ralph-loop plugin
-        const ralphCmd = `${ralphCommand} "${taskInstruction}" --completion-promise "${completionPromise}" --max-iterations ${maxIterations}`;
-        fullCommand = `${claudePath} ${flags}"${ralphCmd}"`;
-      } else {
-        // Run Claude directly with the prompt
-        fullCommand = `${claudePath} ${flags}"${taskInstruction}"`;
-      }
-
-      // Get workspace folder
-      const workspaceFolders = vscode.workspace.workspaceFolders;
-      const cwd = workspaceFolders?.[0]?.uri.fsPath;
-
-      // Create terminal
-      const terminalName = `Claude: ${task.label.substring(0, 20)}`;
-      const terminal = vscode.window.createTerminal({
-        name: terminalName,
-        cwd: cwd,
-      });
-
-      // Store terminal reference
-      this.claudeTerminals.set(taskId, terminal);
-
-      terminal.show();
-      terminal.sendText(fullCommand);
-
-      // Update task status to Doing
-      await this.taskParser.updateTaskStatus(taskId, "Doing");
-
-      // Notify user
-      vscode.window.showInformationMessage(`Executing via Claude: ${task.label}`);
-
-      // Notify webview
-      if (this.panel) {
-        this.panel.webview.postMessage({
-          command: "claudeExecutionStarted",
-          taskId,
-        });
-      }
-
-      // Set up completion tracking
-      this.watchForCompletion(taskId);
-
-      // Refresh board to show updated status
-      await this.refresh();
-    } catch (error) {
-      vscode.window.showErrorMessage(`Failed to execute via Claude: ${error}`);
-      if (this.panel) {
-        this.panel.webview.postMessage({
-          command: "claudeExecutionError",
-          taskId,
-          error: String(error),
-        });
-      }
-    }
+    // Delegate to the new multi-CLI handler
+    await this.handleExecuteViaCLI(taskId);
   }
 
   private watchForCompletion(taskId: string) {
@@ -1051,6 +1135,10 @@ Implementation details and considerations.
     );
 
     const checkCompletion = async () => {
+      // Guard against race condition - if watcher is already cleaned up,
+      // another trigger already processed this completion
+      if (!this.completionWatchers.has(taskId)) return;
+
       const tasks = await this.taskParser.parseTasks();
       const task = tasks.find((t) => t.id === taskId);
 
@@ -1123,7 +1211,7 @@ Implementation details and considerations.
       this.claudeTerminals.delete(taskId);
       this.cleanupTaskTracking(taskId);
 
-      vscode.window.showInformationMessage("Stopped Claude execution");
+      vscode.window.showInformationMessage("Stopped CLI execution");
 
       if (this.panel) {
         this.panel.webview.postMessage({
@@ -1231,31 +1319,46 @@ Implementation details and considerations.
         throw new Error(`Task ${taskId} not found`);
       }
 
-      // Get configuration (same pattern as handleExecuteViaClaude)
+      // Get CLI status and selected provider
       const config = vscode.workspace.getConfiguration("kaiban");
-      const claudePath = config.get<string>("claude.executablePath", "claude");
-      const additionalFlags = config.get<string>("claude.additionalFlags", "");
-      const useRalphLoop = config.get<boolean>("claude.useRalphLoop", true);
-      const promptTemplate = config.get<string>(
-        "claude.promptTemplate",
-        "Read the task file at {taskFile} and implement it. The task contains a link to the PRD with full requirements. Update the task status to Testing when complete."
-      );
-      const ralphCommand = config.get<string>("ralph.command", "/ralph-loop:ralph-loop");
-      const maxIterations = config.get<number>("ralph.maxIterations", 5);
-      const completionPromise = config.get<string>("ralph.completionPromise", "TASK COMPLETE");
+      const selectionMode = config.get<CLISelectionMode>("cli.defaultProvider", "auto");
+      const status =
+        this.cachedCLIStatus ||
+        (await this.cliDetectionService.getCLIAvailabilityStatus(selectionMode));
+
+      if (!status.hasAvailableCLI || !status.selectedProvider) {
+        throw new Error("No CLI available for batch execution");
+      }
+
+      const selectedCLI = status.selectedProvider;
+
+      // Get CLI-specific configuration
+      const cliConfig = this.cliDetectionService.getCLIConfig(selectedCLI, {
+        get: <T>(key: string, defaultValue: T) => config.get<T>(key, defaultValue),
+      });
 
       // Build command
-      const taskInstruction = promptTemplate.replace("{taskFile}", task.filePath);
-      const flags = additionalFlags ? `${additionalFlags} ` : "";
+      const taskInstruction = cliConfig.promptTemplate.replace("{taskFile}", task.filePath);
+      const flags = cliConfig.additionalFlags ? `${cliConfig.additionalFlags} ` : "";
       let fullCommand: string;
 
-      if (useRalphLoop) {
-        const escapedInstruction = taskInstruction.replace(/"/g, '\\"');
-        const escapedPromise = completionPromise.replace(/"/g, '\\"');
-        const ralphCmd = `${ralphCommand} \\"${escapedInstruction}\\" --completion-promise \\"${escapedPromise}\\" --max-iterations ${maxIterations}`;
-        fullCommand = `${claudePath} ${flags}"${ralphCmd}"`;
+      // For Claude, check if we should use ralph-loop
+      if (selectedCLI === "claude") {
+        const useRalphLoop = config.get<boolean>("claude.useRalphLoop", true);
+        const ralphCommand = config.get<string>("ralph.command", "/ralph-loop:ralph-loop");
+        const maxIterations = config.get<number>("ralph.maxIterations", 5);
+        const completionPromise = config.get<string>("ralph.completionPromise", "TASK COMPLETE");
+
+        if (useRalphLoop) {
+          const escapedInstruction = taskInstruction.replace(/"/g, '\\"');
+          const escapedPromise = completionPromise.replace(/"/g, '\\"');
+          const ralphCmd = `${ralphCommand} \\"${escapedInstruction}\\" --completion-promise \\"${escapedPromise}\\" --max-iterations ${maxIterations}`;
+          fullCommand = `${cliConfig.executablePath} ${flags}"${ralphCmd}"`;
+        } else {
+          fullCommand = `${cliConfig.executablePath} ${flags}"${taskInstruction}"`;
+        }
       } else {
-        fullCommand = `${claudePath} ${flags}"${taskInstruction}"`;
+        fullCommand = `${cliConfig.executablePath} ${flags}"${taskInstruction}"`;
       }
 
       // Get workspace folder
@@ -1263,7 +1366,7 @@ Implementation details and considerations.
       const cwd = workspaceFolders?.[0]?.uri.fsPath;
 
       // Create terminal
-      const terminalName = `Batch: ${task.label.substring(0, 20)}`;
+      const terminalName = `Batch (${getCLIDisplayName(selectedCLI)}): ${task.label.substring(0, 15)}`;
       const terminal = vscode.window.createTerminal({
         name: terminalName,
         cwd: cwd,
@@ -1312,6 +1415,10 @@ Implementation details and considerations.
 
     const checkCompletion = async () => {
       if (this.batchExecutionCancelled) return;
+
+      // Guard against race condition - if watcher is already cleaned up,
+      // another trigger already processed this completion
+      if (!this.completionWatchers.has(taskId)) return;
 
       const tasks = await this.taskParser.parseTasks();
       const task = tasks.find((t) => t.id === taskId);

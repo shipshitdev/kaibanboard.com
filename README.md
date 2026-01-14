@@ -43,9 +43,9 @@
 
 ## Why Kaiban Board?
 
-**Kaiban Board** transforms your markdown task files into a visual kanban board directly inside Cursor IDE. Execute tasks with Claude CLI right from your board.
+**Kaiban Board** transforms your markdown task files into a visual kanban board directly inside VS Code or Cursor IDE. Execute tasks with AI CLI tools right from your board.
 
-- **Claude CLI Integration** - Execute tasks directly via Claude Code from the board
+- **Multi-CLI Support** - Execute tasks via Claude CLI, Codex CLI, or Cursor CLI
 - **Markdown-based** - Tasks are simple `.md` files you own and version control
 - **Zero lock-in** - Your tasks are just files in your repo, not locked in a database
 
@@ -53,24 +53,27 @@
 
 | Feature | Description |
 |---------|-------------|
+| **Multi-CLI Support** | Execute tasks via Claude CLI, Codex CLI, or Cursor CLI - auto-detects available CLIs |
 | **6-Column Board** | Backlog, To Do, Doing, Testing, Done, Blocked - fully customizable |
 | **PRD Preview** | View Product Requirements Documents inline |
 | **Multi-Workspace** | Aggregates tasks from all workspace folders |
 | **Drag & Drop** | Reorder tasks within columns, order persists to files |
 | **Priority Sorting** | Smart sorting by custom order, then by priority |
-| **Direct Task Execution** | Execute tasks with Claude Code directly from the kanban board - just click ▶ |
-| **Ralph Wiggum Loop** | Optional integration with [ralph-wiggum plugin](https://github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum) for autonomous iterative execution |
-| **Theme Support** | Adapts to Cursor's dark/light theme |
+| **Direct Task Execution** | Execute tasks directly from the kanban board - just click ▶ |
+| **Ralph Wiggum Loop** | Optional integration with [ralph-wiggum plugin](https://github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum) for autonomous iterative execution (Claude CLI only) |
+| **Theme Support** | Adapts to VS Code/Cursor's dark/light theme |
 | **Real-time Refresh** | Board updates when task files change |
 
 ## Installation
 
 ### From VS Code Marketplace
 
-1. Open VS Code/Cursor
+1. Open VS Code or Cursor
 2. Go to Extensions (`Cmd+Shift+X` / `Ctrl+Shift+X`)
 3. Search for "Kaiban Board"
 4. Click Install
+
+**Note:** This extension works in both VS Code and Cursor. The terminal integration that executes tasks works in both editors since they both support opening terminals.
 
 ### From VSIX File
 
@@ -150,14 +153,45 @@ Add any additional details here.
 
 **Execute tasks directly from the kanban board** - no need to open files or run commands manually. Simply click the ▶ button on any task card to start execution.
 
+#### Multi-CLI Support
+
+Kaiban Board supports multiple CLI tools for task execution:
+
+| CLI | Command | Description |
+|-----|---------|-------------|
+| **Claude CLI** | `claude` | Anthropic's Claude Code CLI |
+| **Codex CLI** | `codex` | OpenAI's Codex CLI |
+| **Cursor CLI** | `cursor` | Cursor IDE's built-in CLI |
+
+The extension **auto-detects** which CLIs are installed on your system and automatically selects the first available one (in order: Claude > Codex > Cursor). You can also manually specify which CLI to use via settings.
+
 #### Basic Execution
 
 1. Click ▶ on any task in To Do, Doing, or Testing columns
-2. A new terminal opens with Claude Code
-3. Claude reads the task file and implements it
+2. A new terminal opens with the selected CLI
+3. The CLI reads the task file and implements it
 4. Task status automatically updates when complete
 
-#### With Ralph Wiggum Loop (Autonomous Iterative Execution)
+#### CLI Configuration
+
+Each CLI can be configured independently:
+
+```json
+{
+  "kaiban.cli.defaultProvider": "auto",  // "auto", "claude", "codex", or "cursor"
+  "kaiban.claude.executablePath": "claude",
+  "kaiban.claude.promptTemplate": "Read the task file at {taskFile}...",
+  "kaiban.claude.additionalFlags": "",
+  "kaiban.codex.executablePath": "codex",
+  "kaiban.codex.promptTemplate": "Read the task file at {taskFile}...",
+  "kaiban.codex.additionalFlags": "",
+  "kaiban.cursor.executablePath": "cursor",
+  "kaiban.cursor.promptTemplate": "Read the task file at {taskFile}...",
+  "kaiban.cursor.additionalFlags": ""
+}
+```
+
+#### With Ralph Wiggum Loop (Claude CLI Only)
 
 [Ralph Wiggum](https://github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum) is a Claude Code plugin that enables **autonomous, iterative development**. Instead of single-pass execution, Ralph Loop enables Claude to:
 
@@ -170,10 +204,13 @@ Add any additional details here.
 
 1. Install the plugin in Claude Code: `/plugin install ralph-wiggum`
 2. Enable in settings: `kaiban.claude.useRalphLoop: true`
-3. Click ▶ on any task card in the board
-4. Claude will work iteratively, automatically reviewing and improving until the task is complete
+3. Make sure Claude CLI is selected (either via `auto` or `claude` in `kaiban.cli.defaultProvider`)
+4. Click ▶ on any task card in the board
+5. Claude will work iteratively, automatically reviewing and improving until the task is complete
 
 Ralph Loop is particularly useful for complex tasks that require multiple steps, testing, and refinement. The extension automatically includes your PRD content for full context.
+
+**Note:** Ralph Wiggum Loop only works with Claude CLI. If you select Codex or Cursor as your CLI provider, the ralph-loop setting will be ignored.
 
 ## Project Structure
 
@@ -213,25 +250,53 @@ See [DEVELOPMENT.md](./DEVELOPMENT.md) for complete development guide.
 
 ## Configuration
 
+### General Settings
+
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `kaiban.columns.enabled` | `["To Do", "Doing", "Testing", "Done"]` | Columns to display |
 | `kaiban.task.basePath` | `.agent/TASKS` | Task files location |
 | `kaiban.prd.basePath` | `.agent/PRDS` | PRD files location |
+| `kaiban.cli.defaultProvider` | `auto` | Default CLI provider (`auto`, `claude`, `codex`, `cursor`) |
+
+### Claude CLI Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
 | `kaiban.claude.executablePath` | `claude` | Path to Claude CLI |
-| `kaiban.claude.useRalphLoop` | `false` | Use Ralph Loop plugin |
 | `kaiban.claude.promptTemplate` | `Read the task file at {taskFile}...` | Prompt template |
+| `kaiban.claude.additionalFlags` | ` ` | Additional CLI flags |
+| `kaiban.claude.useRalphLoop` | `false` | Use Ralph Loop plugin |
 | `kaiban.claude.executionTimeout` | `30` | Max execution time (minutes) |
+
+### Codex CLI Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `kaiban.codex.executablePath` | `codex` | Path to Codex CLI |
+| `kaiban.codex.promptTemplate` | `Read the task file at {taskFile}...` | Prompt template |
+| `kaiban.codex.additionalFlags` | ` ` | Additional CLI flags |
+
+### Cursor CLI Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `kaiban.cursor.executablePath` | `cursor` | Path to Cursor CLI |
+| `kaiban.cursor.promptTemplate` | `Read the task file at {taskFile}...` | Prompt template |
+| `kaiban.cursor.additionalFlags` | ` ` | Additional CLI flags |
 
 ## Requirements
 
-- **Cursor IDE** (required) - This extension only works in Cursor
-- **Claude Code CLI** - For task execution
+- **VS Code or Cursor IDE** - This extension works in both VS Code and Cursor
+- **AI CLI Tool** (at least one of the following):
+  - **Claude Code CLI** - Anthropic's CLI (`npm install -g @anthropic-ai/claude-cli`)
+  - **Codex CLI** - OpenAI's CLI (`npm install -g @openai/codex`)
+  - **Cursor CLI** - Included with Cursor IDE
 - Workspace with `.agent/TASKS/` directory
 
 ### Optional
 
-- **[Ralph Wiggum Plugin](https://github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum)**: For autonomous iterative task execution with self-review and refinement
+- **[Ralph Wiggum Plugin](https://github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum)**: For autonomous iterative task execution with self-review and refinement (Claude CLI only)
 
 ## License
 
