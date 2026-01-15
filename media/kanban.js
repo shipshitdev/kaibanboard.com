@@ -264,6 +264,10 @@ function startRateLimitCountdown(taskId, waitSeconds) {
           btn.innerHTML = isRunning ? '⏹' : '▶';
           btn.title = isRunning ? 'Stop execution' : 'Execute via Claude';
         }
+        // Clear progress when task stops running
+        if (!isRunning) {
+          clearTaskProgress(taskId);
+        }
       }
 
       // Also update PRD panel button if this task is selected
@@ -273,6 +277,50 @@ function startRateLimitCountdown(taskId, waitSeconds) {
           prdBtn.innerHTML = isRunning ? '⏹ Stop' : '▶ Execute';
           prdBtn.classList.toggle('running', isRunning);
         }
+      }
+    }
+
+    // Update task progress indicator with current tool/step
+    function updateTaskProgress(taskId, toolName, status) {
+      const card = document.querySelector(`[data-task-id="${taskId}"]`);
+      if (!card) return;
+
+      // Get or create progress element
+      let progressEl = card.querySelector('.claude-progress');
+      if (!progressEl) {
+        progressEl = document.createElement('div');
+        progressEl.className = 'claude-progress';
+        progressEl.innerHTML = `
+          <span class="progress-tool-name"></span>
+          <span class="progress-status"></span>
+        `;
+        card.appendChild(progressEl);
+      }
+
+      // Update content
+      const toolNameEl = progressEl.querySelector('.progress-tool-name');
+      const statusEl = progressEl.querySelector('.progress-status');
+
+      if (toolNameEl) {
+        toolNameEl.textContent = toolName || '';
+        toolNameEl.style.display = toolName ? 'inline' : 'none';
+      }
+      if (statusEl) {
+        statusEl.textContent = status || 'Working...';
+      }
+
+      // Show progress element
+      progressEl.style.display = 'flex';
+    }
+
+    // Clear task progress indicator
+    function clearTaskProgress(taskId) {
+      const card = document.querySelector(`[data-task-id="${taskId}"]`);
+      if (!card) return;
+
+      const progressEl = card.querySelector('.claude-progress');
+      if (progressEl) {
+        progressEl.style.display = 'none';
       }
     }
 
@@ -1443,6 +1491,16 @@ function startRateLimitCountdown(taskId, waitSeconds) {
           const errorMsg = message.error || 'Unknown error';
           appendToTerminal(`❌ Execution failed: ${errorMsg}`, 'error');
           alert('Claude execution failed: ' + errorMsg);
+          break;
+        }
+
+        case 'claudeProgressUpdate': {
+          updateTaskProgress(message.taskId, message.toolName, message.status);
+          break;
+        }
+
+        case 'claudeProgressStopped': {
+          clearTaskProgress(message.taskId);
           break;
         }
 

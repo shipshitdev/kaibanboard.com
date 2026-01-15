@@ -3,9 +3,11 @@ import * as vscode from "vscode";
 import { ClaudeCodeQuotaService } from "./services/claudeCodeQuotaService";
 import { CLIDetectionService } from "./services/cliDetectionService";
 import { SkillService } from "./services/skillService";
+import { TranscriptMonitorService } from "./services/transcriptMonitorService";
 import { type Task, TaskParser } from "./taskParser";
 import type { QuotaDisplayData } from "./types/claudeQuota";
 import { formatResetTime, getQuotaStatus } from "./types/claudeQuota";
+import type { ClaudeStepProgress } from "./types/claudeTranscript";
 import type { CLIAvailabilityStatus, CLIProviderName, CLISelectionMode } from "./types/cli";
 import { getCLIDisplayName } from "./types/cli";
 import { Icons } from "./utils/lucideIcons";
@@ -16,6 +18,7 @@ export class KanbanViewProvider {
   private skillService: SkillService;
   private quotaService: ClaudeCodeQuotaService;
   private cliDetectionService: CLIDetectionService;
+  private transcriptMonitorService: TranscriptMonitorService;
   private pollingIntervals: Map<string, NodeJS.Timeout> = new Map();
   private skipNextConfigRefresh = false;
   private quotaRefreshInterval: NodeJS.Timeout | undefined;
@@ -34,6 +37,7 @@ export class KanbanViewProvider {
     this.skillService = new SkillService();
     this.quotaService = new ClaudeCodeQuotaService();
     this.cliDetectionService = new CLIDetectionService();
+    this.transcriptMonitorService = new TranscriptMonitorService();
 
     // Listen for configuration changes to auto-refresh board
     vscode.workspace.onDidChangeConfiguration(
@@ -87,6 +91,9 @@ export class KanbanViewProvider {
       clearTimeout(timeout);
     }
     this.completionPollers.clear();
+
+    // Dispose transcript monitors
+    this.transcriptMonitorService.dispose();
 
     // Dispose panel if exists
     if (this.panel) {
@@ -496,6 +503,11 @@ export class KanbanViewProvider {
       // Set up completion tracking
       this.watchForCompletion(taskId);
 
+      // Start transcript monitoring for Claude CLI (real-time progress)
+      if (selectedCLI === "claude" && cwd) {
+        this.startTranscriptMonitoring(taskId, cwd);
+      }
+
       // Refresh board to show updated status
       await this.refresh();
     } catch (error) {
@@ -508,6 +520,37 @@ export class KanbanViewProvider {
         });
       }
     }
+  }
+
+  /**
+   * Start monitoring Claude CLI transcript for real-time progress updates.
+   */
+  private startTranscriptMonitoring(taskId: string, workspacePath: string): void {
+    this.transcriptMonitorService.startMonitoring(
+      taskId,
+      workspacePath,
+      (progress: ClaudeStepProgress) => {
+        this.sendProgressUpdate(taskId, progress);
+      }
+    );
+  }
+
+  /**
+   * Send progress update to webview.
+   */
+  private sendProgressUpdate(taskId: string, progress: ClaudeStepProgress): void {
+    if (!this.panel) return;
+
+    const displayInfo = TranscriptMonitorService.getProgressDisplayText(progress);
+
+    this.panel.webview.postMessage({
+      command: "claudeProgressUpdate",
+      taskId,
+      toolName: displayInfo.toolName,
+      status: displayInfo.status,
+      currentStep: progress.currentStep,
+      recentSteps: progress.recentSteps.slice(-5), // Send last 5 steps
+    });
   }
 
   public async refresh() {
@@ -1199,6 +1242,17 @@ Implementation details and considerations.
       this.completionPollers.delete(taskId);
     }
 
+    // Stop transcript monitoring
+    this.transcriptMonitorService.stopMonitoring(taskId);
+
+    // Notify webview that progress tracking stopped
+    if (this.panel) {
+      this.panel.webview.postMessage({
+        command: "claudeProgressStopped",
+        taskId,
+      });
+    }
+
     if (includeTerminal) {
       this.claudeTerminals.delete(taskId);
     }
@@ -1383,6 +1437,11 @@ Implementation details and considerations.
 
       // Set up completion tracking for batch
       this.watchForBatchCompletion(taskId);
+
+      // Start transcript monitoring for Claude CLI (real-time progress)
+      if (selectedCLI === "claude" && cwd) {
+        this.startTranscriptMonitoring(taskId, cwd);
+      }
 
       // Refresh board
       await this.refresh();

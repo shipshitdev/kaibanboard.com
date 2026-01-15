@@ -556,6 +556,37 @@ select.action-btn option {
   }
 }
 
+/* Claude CLI progress indicator */
+.claude-progress {
+  display: none;
+  margin-top: 8px;
+  padding: 6px 8px;
+  background: var(--vscode-textCodeBlock-background);
+  border-radius: 4px;
+  font-size: 11px;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.task-card.running .claude-progress {
+  display: flex;
+}
+
+.progress-tool-name {
+  font-weight: 600;
+  color: #22c55e;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.progress-status {
+  color: var(--vscode-descriptionForeground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Rate limit countdown state */
 .task-card.rate-limited {
   background: linear-gradient(135deg, rgba(234, 179, 8, 0.15) 0%, rgba(234, 179, 8, 0.05) 100%);
