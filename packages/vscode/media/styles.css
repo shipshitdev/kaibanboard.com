@@ -241,24 +241,34 @@ select.action-btn option {
   background: rgba(107, 114, 128, 0.05);
 }
 
-.column[data-status="To Do"] {
-  border-left-color: #3b82f6;
-  background: rgba(59, 130, 246, 0.05);
-}
-
-.column[data-status="Doing"] {
+.column[data-status="Planning"] {
   border-left-color: #8b5cf6;
   background: rgba(139, 92, 246, 0.05);
 }
 
-.column[data-status="Testing"] {
+.column[data-status="In Progress"] {
   border-left-color: #f59e0b;
   background: rgba(245, 158, 11, 0.05);
+}
+
+.column[data-status="AI Review"] {
+  border-left-color: #06b6d4;
+  background: rgba(6, 182, 212, 0.05);
+}
+
+.column[data-status="Human Review"] {
+  border-left-color: #ec4899;
+  background: rgba(236, 72, 153, 0.05);
 }
 
 .column[data-status="Done"] {
   border-left-color: #10b981;
   background: rgba(16, 185, 129, 0.05);
+}
+
+.column[data-status="Archived"] {
+  border-left-color: #64748b;
+  background: rgba(100, 116, 139, 0.05);
 }
 
 .column[data-status="Blocked"] {
