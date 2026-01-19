@@ -308,6 +308,10 @@ export class KanbanViewProvider {
           case "getReviewStatus":
             await this.handleGetReviewStatus(message.taskId);
             break;
+          // Changelog handler
+          case "generateChangelog":
+            await vscode.commands.executeCommand("kaiban.generateChangelog");
+            break;
         }
       },
       undefined,

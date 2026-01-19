@@ -4,6 +4,7 @@
  * Usage:
  *   kai                  # Run in current directory
  *   kai /path/to/project # Run in specified directory
+ *   kai changelog        # Generate changelog from completed tasks
  *   kai --help           # Show help
  */
 
@@ -13,11 +14,18 @@ import type { TaskStatus } from "@kaibanboard/core";
 import { render } from "ink";
 import meow from "meow";
 import { App } from "./app.js";
+import { runChangelogCommand } from "./commands/changelog.js";
 
 const cli = meow(
   `
   Usage
     $ kai [directory]
+    $ kai changelog [options]
+
+  Commands
+    changelog    Generate changelog from completed tasks
+                 Options: --since, --format, --output, --version, --dry-run
+                 Use 'kai changelog --help' for more info
 
   Options
     --columns, -c  Columns to display (comma-separated)
@@ -28,6 +36,8 @@ const cli = meow(
     $ kai
     $ kai /path/to/project
     $ kai --columns "Backlog,Planning,In Progress,Done"
+    $ kai changelog --since v1.0.0 --version 1.1.0
+    $ kai changelog --dry-run
 `,
   {
     importMeta: import.meta,
@@ -41,9 +51,19 @@ const cli = meow(
   }
 );
 
-function main() {
+async function main() {
+  // Check for subcommands
+  const firstArg = cli.input[0];
+
+  if (firstArg === "changelog") {
+    // Pass remaining args to changelog command
+    const changelogArgs = process.argv.slice(process.argv.indexOf("changelog") + 1);
+    await runChangelogCommand(changelogArgs);
+    return;
+  }
+
   // Determine workspace directory
-  const workspaceDir = cli.input[0] ? path.resolve(cli.input[0]) : process.cwd();
+  const workspaceDir = firstArg ? path.resolve(firstArg) : process.cwd();
 
   // Validate directory exists
   if (!fs.existsSync(workspaceDir)) {

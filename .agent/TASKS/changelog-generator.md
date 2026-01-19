@@ -4,7 +4,8 @@
 **Label:** Changelog Generator
 **Description:** Auto-generate release notes and changelogs from completed tasks, supporting multiple formats and both VS Code extension and CLI.
 **Type:** Feature
-**Status:** To Do
+**Status:** Done
+**CompletedAt:** 2026-01-19
 **Priority:** High
 **Created:** 2026-01-15
 **Updated:** 2026-01-15

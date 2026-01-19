@@ -4,7 +4,8 @@
 **Label:** Convert CSS to SCSS
 **Description:** Convert the extension from plain CSS to SCSS by adding a Sass compiler, updating build scripts, and refactoring the 1,718-line CSS file using SCSS features (variables, nesting, mixins).
 **Type:** Enhancement
-**Status:** To Do
+**Status:** Done
+**CompletedAt:** 2026-01-19
 **Priority:** Medium
 **Created:** 2026-01-13
 **Updated:** 2026-01-13

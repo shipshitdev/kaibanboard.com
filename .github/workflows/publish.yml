@@ -1,4 +1,4 @@
-name: Publish Extension
+name: Publish
 
 on:
   release:
@@ -18,6 +18,12 @@ jobs:
         with:
           bun-version: latest
 
+      - name: Setup Node.js (for npm publish)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
       - name: Get bun store directory
         id: bun-cache
         shell: bash
@@ -36,26 +42,44 @@ jobs:
       - name: Run tests
         run: bun run test
 
-      - name: Package extension
-        run: bun run package
+      - name: Build all packages
+        run: bun run build
+
+      # Publish @kaibanboard/cli to npm
+      - name: Publish @kaibanboard/cli to npm
+        working-directory: packages/cli
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # Package VS Code extension
+      - name: Package VS Code extension
+        run: bun run package:vscode
 
       - name: Get extension info
         id: ext-info
+        working-directory: packages/vscode
         run: |
           VERSION=$(jq -r .version package.json)
           NAME=$(jq -r .name package.json)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "name=$NAME" >> $GITHUB_OUTPUT
-          echo "vsix_path=build/${NAME}-${VERSION}.vsix" >> $GITHUB_OUTPUT
+          echo "vsix_path=packages/vscode/build/${NAME}-${VERSION}.vsix" >> $GITHUB_OUTPUT
 
       - name: Verify VSIX exists
         run: |
           if [ ! -f "${{ steps.ext-info.outputs.vsix_path }}" ]; then
             echo "VSIX file not found at ${{ steps.ext-info.outputs.vsix_path }}"
-            ls -la build/
+            ls -la packages/vscode/build/
             exit 1
           fi
           echo "Found VSIX: ${{ steps.ext-info.outputs.vsix_path }}"
+
+      # Publish to VS Code Marketplace
+      - name: Publish to VS Code Marketplace
+        run: npx @vscode/vsce publish --packagePath ${{ steps.ext-info.outputs.vsix_path }}
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
 
       # Publish to Open VSX (Cursor marketplace)
       - name: Publish to Open VSX

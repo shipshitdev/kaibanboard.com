@@ -39,6 +39,11 @@
         "command": "kaiban.createPRFromTask",
         "icon": "$(git-pull-request)",
         "title": "Kaiban: Create PR from Task"
+      },
+      {
+        "command": "kaiban.generateChangelog",
+        "icon": "$(history)",
+        "title": "Kaiban: Generate Changelog"
       }
     ],
     "configuration": {

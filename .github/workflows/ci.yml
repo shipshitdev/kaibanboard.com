@@ -38,14 +38,14 @@ jobs:
       - name: Lint check
         run: bun run check
 
-      - name: Type check and compile
-        run: bun run compile
+      - name: Build all packages
+        run: bun run build
 
       - name: Run tests with coverage
         run: bun run test:coverage
 
-      - name: Package extension
-        run: bun run package
+      - name: Package VS Code extension
+        run: bun run package:vscode
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4

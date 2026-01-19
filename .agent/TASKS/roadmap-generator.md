@@ -4,7 +4,8 @@
 **Label:** Roadmap Generator
 **Description:** AI-assisted feature planning with competitor analysis, audience targeting, and prioritization framework.
 **Type:** Feature
-**Status:** To Do
+**Status:** Done
+**CompletedAt:** 2026-01-19
 **Priority:** Medium
 **Created:** 2026-01-15
 **Updated:** 2026-01-15

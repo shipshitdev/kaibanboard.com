@@ -4,7 +4,8 @@
 **Label:** Git Worktree Isolation
 **Description:** Run AI agent tasks in isolated git worktrees to keep main branch safe from experimental changes.
 **Type:** Feature
-**Status:** To Do
+**Status:** Done
+**CompletedAt:** 2026-01-19
 **Priority:** High
 **Created:** 2026-01-15
 **Updated:** 2026-01-15

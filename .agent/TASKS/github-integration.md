@@ -4,7 +4,8 @@
 **Label:** GitHub/GitLab Integration
 **Description:** Import issues from GitHub/GitLab as tasks and create PRs/MRs from completed tasks using gh/glab CLI tools.
 **Type:** Feature
-**Status:** To Do
+**Status:** Done
+**CompletedAt:** 2026-01-19
 **Priority:** High
 **Created:** 2026-01-15
 **Updated:** 2026-01-15

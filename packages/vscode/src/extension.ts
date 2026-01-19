@@ -2,7 +2,10 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { KanbanViewProvider } from "./kanbanView";
+import { ChangelogService } from "./services/changelogService";
 import { SkillService } from "./services/skillService";
+import { TaskParser } from "./taskParser";
+import type { ChangelogFormat } from "./types/changelog";
 import { getPRDBasePath, getTasksBasePath, getWorkspaceFolder } from "./utils/fileUtils";
 
 let kanbanView: KanbanViewProvider;
@@ -353,6 +356,103 @@ Important: Create the directory if it doesn't exist. Use a kebab-case filename b
     }
   );
 
+  // Register command to generate changelog
+  const generateChangelogCommand = vscode.commands.registerCommand(
+    "kaiban.generateChangelog",
+    async () => {
+      try {
+        const workspaceFolder = getWorkspaceFolder();
+        if (!workspaceFolder) {
+          vscode.window.showErrorMessage("No workspace folder open");
+          return;
+        }
+
+        const workspacePath = workspaceFolder.uri.fsPath;
+        const changelogService = new ChangelogService(workspacePath);
+        const taskParser = new TaskParser();
+
+        // Get available tags
+        const tags = await changelogService.getAllTags();
+        const tagItems = [
+          { label: "All completed tasks", value: undefined },
+          ...tags.map((tag) => ({ label: `Since ${tag}`, value: tag })),
+        ];
+
+        // Ask user for starting point
+        const sinceSelection = await vscode.window.showQuickPick(tagItems, {
+          placeHolder: "Generate changelog since...",
+        });
+
+        if (sinceSelection === undefined) return;
+
+        // Ask for format
+        const formatSelection = await vscode.window.showQuickPick(
+          [
+            { label: "Keep a Changelog (Recommended)", value: "keepachangelog" },
+            { label: "Simple Markdown", value: "markdown" },
+            { label: "JSON", value: "json" },
+          ],
+          { placeHolder: "Select output format" }
+        );
+
+        if (!formatSelection) return;
+
+        // Ask for version (optional)
+        const version = await vscode.window.showInputBox({
+          prompt: "Version number (leave empty for Unreleased)",
+          placeHolder: "1.0.0",
+        });
+
+        // Ask if dry run
+        const actionSelection = await vscode.window.showQuickPick(
+          [
+            { label: "Write to CHANGELOG.md", value: false },
+            { label: "Preview only (dry run)", value: true },
+          ],
+          { placeHolder: "Select action" }
+        );
+
+        if (actionSelection === undefined) return;
+
+        // Parse tasks and generate changelog
+        const tasks = taskParser.parseTasks();
+        const result = await changelogService.generateChangelog(tasks, {
+          since: sinceSelection.value,
+          format: formatSelection.value as ChangelogFormat,
+          version: version || undefined,
+          dryRun: actionSelection.value,
+          outputPath: "CHANGELOG.md",
+        });
+
+        if (result.success) {
+          if (result.entryCount === 0) {
+            vscode.window.showWarningMessage(result.error || "No completed tasks found");
+          } else if (actionSelection.value) {
+            // Show preview in new document
+            const doc = await vscode.workspace.openTextDocument({
+              content: result.content,
+              language: formatSelection.value === "json" ? "json" : "markdown",
+            });
+            await vscode.window.showTextDocument(doc, { preview: true });
+            vscode.window.showInformationMessage(`Preview: ${result.entryCount} entries generated`);
+          } else {
+            // Open the changelog file
+            const changelogPath = vscode.Uri.file(path.join(workspacePath, "CHANGELOG.md"));
+            const doc = await vscode.workspace.openTextDocument(changelogPath);
+            await vscode.window.showTextDocument(doc);
+            vscode.window.showInformationMessage(
+              `Changelog updated with ${result.entryCount} entries`
+            );
+          }
+        } else {
+          vscode.window.showErrorMessage(`Failed to generate changelog: ${result.error}`);
+        }
+      } catch (error) {
+        vscode.window.showErrorMessage(`Failed to generate changelog: ${error}`);
+      }
+    }
+  );
+
   context.subscriptions.push(
     showBoardCommand,
     refreshBoardCommand,
@@ -360,7 +460,8 @@ Important: Create the directory if it doesn't exist. Use a kebab-case filename b
     createPRDCommand,
     createTaskCommand,
     importGitHubIssuesCommand,
-    createPRFromTaskCommand
+    createPRFromTaskCommand,
+    generateChangelogCommand
   );
 
   // Show welcome message

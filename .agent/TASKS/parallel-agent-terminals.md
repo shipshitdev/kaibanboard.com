@@ -4,7 +4,8 @@
 **Label:** Parallel Agent Terminals
 **Description:** Enable concurrent task execution with multiple AI agent terminals (up to 12), with progress tracking and resource management.
 **Type:** Feature
-**Status:** To Do
+**Status:** Done
+**CompletedAt:** 2026-01-19
 **Priority:** High
 **Created:** 2026-01-15
 **Updated:** 2026-01-15
