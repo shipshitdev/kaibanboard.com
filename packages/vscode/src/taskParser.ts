@@ -1,11 +1,17 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { Task, TaskStatus } from "@kaibanboard/core";
+import type { GitHubMetadata, Task, TaskStatus, TaskWorktreeMetadata } from "@kaibanboard/core";
 import { CoreTaskParser } from "@kaibanboard/core";
 import * as vscode from "vscode";
 
 // Re-export types from core for backward compatibility
-export type { Task, TaskPriority, TaskStatus } from "@kaibanboard/core";
+export type {
+  GitHubMetadata,
+  Task,
+  TaskPriority,
+  TaskStatus,
+  TaskWorktreeMetadata,
+} from "@kaibanboard/core";
 
 /**
  * VS Code adapter for CoreTaskParser
@@ -249,6 +255,176 @@ ${orderLine}**Created:** ${task.created}
       }
       return line;
     });
+
+    fs.writeFileSync(task.filePath, updatedLines.join("\n"), "utf-8");
+  }
+
+  /**
+   * Update worktree metadata for a task
+   */
+  public updateTaskWorktree(taskId: string, worktree: TaskWorktreeMetadata): void {
+    const task = this.getTask(taskId);
+
+    if (!task) {
+      throw new Error(`Task with ID ${taskId} not found`);
+    }
+
+    const content = fs.readFileSync(task.filePath, "utf-8");
+    const lines = content.split("\n");
+    const now = new Date().toISOString();
+
+    // Track which fields exist
+    const existingFields = new Set<string>();
+    for (const line of lines) {
+      if (line.startsWith("**Worktree-Enabled:**")) existingFields.add("enabled");
+      if (line.startsWith("**Worktree-Path:**")) existingFields.add("path");
+      if (line.startsWith("**Worktree-Branch:**")) existingFields.add("branch");
+      if (line.startsWith("**Worktree-Base-Branch:**")) existingFields.add("baseBranch");
+      if (line.startsWith("**Worktree-Created-At:**")) existingFields.add("createdAt");
+      if (line.startsWith("**Worktree-Status:**")) existingFields.add("status");
+    }
+
+    // Update existing lines
+    const updatedLines = lines.map((line) => {
+      if (line.startsWith("**Updated:**")) {
+        return `**Updated:** ${now}`;
+      } else if (line.startsWith("**Worktree-Enabled:**")) {
+        return `**Worktree-Enabled:** ${worktree.worktreeEnabled}`;
+      } else if (line.startsWith("**Worktree-Path:**") && worktree.worktreePath) {
+        return `**Worktree-Path:** ${worktree.worktreePath}`;
+      } else if (line.startsWith("**Worktree-Branch:**") && worktree.worktreeBranch) {
+        return `**Worktree-Branch:** ${worktree.worktreeBranch}`;
+      } else if (line.startsWith("**Worktree-Base-Branch:**") && worktree.worktreeBaseBranch) {
+        return `**Worktree-Base-Branch:** ${worktree.worktreeBaseBranch}`;
+      } else if (line.startsWith("**Worktree-Created-At:**") && worktree.worktreeCreatedAt) {
+        return `**Worktree-Created-At:** ${worktree.worktreeCreatedAt}`;
+      } else if (line.startsWith("**Worktree-Status:**") && worktree.worktreeStatus) {
+        return `**Worktree-Status:** ${worktree.worktreeStatus}`;
+      }
+      return line;
+    });
+
+    // Add missing fields before the --- separator
+    const separatorIndex = updatedLines.indexOf("---");
+    const insertIndex = separatorIndex > 0 ? separatorIndex : updatedLines.length;
+
+    const newLines: string[] = [];
+    if (!existingFields.has("enabled")) {
+      newLines.push(`**Worktree-Enabled:** ${worktree.worktreeEnabled}`);
+    }
+    if (!existingFields.has("path") && worktree.worktreePath) {
+      newLines.push(`**Worktree-Path:** ${worktree.worktreePath}`);
+    }
+    if (!existingFields.has("branch") && worktree.worktreeBranch) {
+      newLines.push(`**Worktree-Branch:** ${worktree.worktreeBranch}`);
+    }
+    if (!existingFields.has("baseBranch") && worktree.worktreeBaseBranch) {
+      newLines.push(`**Worktree-Base-Branch:** ${worktree.worktreeBaseBranch}`);
+    }
+    if (!existingFields.has("createdAt") && worktree.worktreeCreatedAt) {
+      newLines.push(`**Worktree-Created-At:** ${worktree.worktreeCreatedAt}`);
+    }
+    if (!existingFields.has("status") && worktree.worktreeStatus) {
+      newLines.push(`**Worktree-Status:** ${worktree.worktreeStatus}`);
+    }
+
+    if (newLines.length > 0) {
+      updatedLines.splice(insertIndex, 0, ...newLines);
+    }
+
+    fs.writeFileSync(task.filePath, updatedLines.join("\n"), "utf-8");
+  }
+
+  /**
+   * Update GitHub metadata for a task
+   */
+  public updateTaskGitHub(taskId: string, github: GitHubMetadata): void {
+    const task = this.getTask(taskId);
+
+    if (!task) {
+      throw new Error(`Task with ID ${taskId} not found`);
+    }
+
+    const content = fs.readFileSync(task.filePath, "utf-8");
+    const lines = content.split("\n");
+    const now = new Date().toISOString();
+
+    // Track which fields exist
+    const existingFields = new Set<string>();
+    for (const line of lines) {
+      if (line.startsWith("**GitHub:**")) existingFields.add("issue");
+      if (line.startsWith("**GitHub-PR:**")) existingFields.add("pr");
+      if (line.startsWith("**GitHub-Synced:**")) existingFields.add("synced");
+    }
+
+    // Update existing lines
+    const updatedLines = lines.map((line) => {
+      if (line.startsWith("**Updated:**")) {
+        return `**Updated:** ${now}`;
+      } else if (line.startsWith("**GitHub:**") && github.issueUrl) {
+        return `**GitHub:** [Issue #${github.issueNumber || ""}](${github.issueUrl})`;
+      } else if (line.startsWith("**GitHub-PR:**") && github.prUrl) {
+        return `**GitHub-PR:** [PR #${github.prNumber || ""}](${github.prUrl})`;
+      } else if (line.startsWith("**GitHub-Synced:**")) {
+        return `**GitHub-Synced:** ${github.lastSynced || now}`;
+      }
+      return line;
+    });
+
+    // Add missing fields before the --- separator
+    const separatorIndex = updatedLines.indexOf("---");
+    const insertIndex = separatorIndex > 0 ? separatorIndex : updatedLines.length;
+
+    const newLines: string[] = [];
+    if (!existingFields.has("issue") && github.issueUrl) {
+      newLines.push(`**GitHub:** [Issue #${github.issueNumber || ""}](${github.issueUrl})`);
+    }
+    if (!existingFields.has("pr") && github.prUrl) {
+      newLines.push(`**GitHub-PR:** [PR #${github.prNumber || ""}](${github.prUrl})`);
+    }
+    if (!existingFields.has("synced")) {
+      newLines.push(`**GitHub-Synced:** ${github.lastSynced || now}`);
+    }
+
+    if (newLines.length > 0) {
+      updatedLines.splice(insertIndex, 0, ...newLines);
+    }
+
+    fs.writeFileSync(task.filePath, updatedLines.join("\n"), "utf-8");
+  }
+
+  /**
+   * Clear worktree metadata from a task (after merge/cleanup)
+   */
+  public clearTaskWorktree(taskId: string): void {
+    const task = this.getTask(taskId);
+
+    if (!task) {
+      throw new Error(`Task with ID ${taskId} not found`);
+    }
+
+    const content = fs.readFileSync(task.filePath, "utf-8");
+    const lines = content.split("\n");
+    const now = new Date().toISOString();
+
+    // Remove worktree lines and update timestamp
+    const updatedLines = lines
+      .filter((line) => {
+        return (
+          !line.startsWith("**Worktree-Enabled:**") &&
+          !line.startsWith("**Worktree-Path:**") &&
+          !line.startsWith("**Worktree-Branch:**") &&
+          !line.startsWith("**Worktree-Base-Branch:**") &&
+          !line.startsWith("**Worktree-Created-At:**") &&
+          !line.startsWith("**Worktree-Status:**")
+        );
+      })
+      .map((line) => {
+        if (line.startsWith("**Updated:**")) {
+          return `**Updated:** ${now}`;
+        }
+        return line;
+      });
 
     fs.writeFileSync(task.filePath, updatedLines.join("\n"), "utf-8");
   }

@@ -5,7 +5,14 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { Task, TaskParserConfig, TaskStatus } from "./types";
+import type {
+  GitHubMetadata,
+  Task,
+  TaskParserConfig,
+  TaskStatus,
+  TaskWorktreeMetadata,
+  WorktreeStatus,
+} from "./types";
 
 export class CoreTaskParser {
   private workspaceDirs: Array<{ path: string; name: string }>;
@@ -36,7 +43,7 @@ export class CoreTaskParser {
     }
 
     const label = titleMatch[1].trim();
-    const metadata: Record<string, string | number> = {};
+    const metadata: Record<string, string | number | boolean> = {};
     let inMetadataSection = false;
 
     for (const line of lines) {
@@ -95,12 +102,81 @@ export class CoreTaskParser {
       } else if (line.startsWith("**Assigned-Agent:**")) {
         const match = line.match(/^\*\*Assigned-Agent:\*\*\s*(.+)$/);
         if (match) metadata.assignedAgent = match[1].trim();
+      }
+      // Worktree metadata
+      else if (line.startsWith("**Worktree-Enabled:**")) {
+        const match = line.match(/^\*\*Worktree-Enabled:\*\*\s*(.+)$/);
+        if (match) metadata.worktreeEnabled = match[1].trim().toLowerCase() === "true";
+      } else if (line.startsWith("**Worktree-Path:**")) {
+        const match = line.match(/^\*\*Worktree-Path:\*\*\s*(.+)$/);
+        if (match) metadata.worktreePath = match[1].trim();
+      } else if (line.startsWith("**Worktree-Branch:**")) {
+        const match = line.match(/^\*\*Worktree-Branch:\*\*\s*(.+)$/);
+        if (match) metadata.worktreeBranch = match[1].trim();
+      } else if (line.startsWith("**Worktree-Base-Branch:**")) {
+        const match = line.match(/^\*\*Worktree-Base-Branch:\*\*\s*(.+)$/);
+        if (match) metadata.worktreeBaseBranch = match[1].trim();
+      } else if (line.startsWith("**Worktree-Created-At:**")) {
+        const match = line.match(/^\*\*Worktree-Created-At:\*\*\s*(.+)$/);
+        if (match) metadata.worktreeCreatedAt = match[1].trim();
+      } else if (line.startsWith("**Worktree-Status:**")) {
+        const match = line.match(/^\*\*Worktree-Status:\*\*\s*(.+)$/);
+        if (match) metadata.worktreeStatus = match[1].trim();
+      }
+      // GitHub metadata
+      else if (line.startsWith("**GitHub:**")) {
+        const match = line.match(/^\*\*GitHub:\*\*\s*\[.*\]\((.+)\)$/);
+        if (match) {
+          metadata.githubIssueUrl = match[1].trim();
+          // Parse issue number from URL
+          const numMatch = match[1].match(/\/issues\/(\d+)/);
+          if (numMatch) metadata.githubIssueNumber = parseInt(numMatch[1], 10);
+          // Parse repository from URL
+          const repoMatch = match[1].match(/github\.com\/([^/]+\/[^/]+)\//);
+          if (repoMatch) metadata.githubRepository = repoMatch[1];
+        }
+      } else if (line.startsWith("**GitHub-PR:**")) {
+        const match = line.match(/^\*\*GitHub-PR:\*\*\s*\[.*\]\((.+)\)$/);
+        if (match) {
+          metadata.githubPrUrl = match[1].trim();
+          const numMatch = match[1].match(/\/pull\/(\d+)/);
+          if (numMatch) metadata.githubPrNumber = parseInt(numMatch[1], 10);
+        }
+      } else if (line.startsWith("**GitHub-Synced:**")) {
+        const match = line.match(/^\*\*GitHub-Synced:\*\*\s*(.+)$/);
+        if (match) metadata.githubLastSynced = match[1].trim();
       } else if (line.startsWith("---") && inMetadataSection) {
         break;
       }
     }
 
     const completed = metadata.status === "Done";
+
+    // Build worktree metadata if present
+    let worktree: TaskWorktreeMetadata | undefined;
+    if (metadata.worktreeEnabled !== undefined) {
+      worktree = {
+        worktreeEnabled: Boolean(metadata.worktreeEnabled),
+        worktreePath: metadata.worktreePath as string | undefined,
+        worktreeBranch: metadata.worktreeBranch as string | undefined,
+        worktreeBaseBranch: metadata.worktreeBaseBranch as string | undefined,
+        worktreeCreatedAt: metadata.worktreeCreatedAt as string | undefined,
+        worktreeStatus: metadata.worktreeStatus as WorktreeStatus | undefined,
+      };
+    }
+
+    // Build GitHub metadata if present
+    let github: GitHubMetadata | undefined;
+    if (metadata.githubIssueUrl || metadata.githubPrUrl) {
+      github = {
+        issueUrl: metadata.githubIssueUrl as string | undefined,
+        issueNumber: metadata.githubIssueNumber as number | undefined,
+        repository: metadata.githubRepository as string | undefined,
+        prUrl: metadata.githubPrUrl as string | undefined,
+        prNumber: metadata.githubPrNumber as number | undefined,
+        lastSynced: metadata.githubLastSynced as string | undefined,
+      };
+    }
 
     return {
       id: String(metadata.id || ""),
@@ -122,6 +198,8 @@ export class CoreTaskParser {
       rejectionCount: (metadata.rejectionCount as number) || 0,
       agentNotes: String(metadata.agentNotes || ""),
       assignedAgent: metadata.assignedAgent as Task["assignedAgent"],
+      worktree,
+      github,
     };
   }
 

@@ -1,7 +1,12 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
+import { AIMergeService } from "./services/aiMergeService";
 import { ClaudeCodeQuotaService } from "./services/claudeCodeQuotaService";
 import { CLIDetectionService } from "./services/cliDetectionService";
+import { CodexReviewService } from "./services/codexReviewService";
+import { GitHubService } from "./services/githubService";
+import { GitService } from "./services/gitService";
+import { GitWorktreeService } from "./services/gitWorktreeService";
 import { SkillService } from "./services/skillService";
 import { TranscriptMonitorService } from "./services/transcriptMonitorService";
 import { type Task, TaskParser } from "./taskParser";
@@ -10,6 +15,10 @@ import { formatResetTime, getQuotaStatus } from "./types/claudeQuota";
 import type { ClaudeStepProgress } from "./types/claudeTranscript";
 import type { CLIAvailabilityStatus, CLIProviderName, CLISelectionMode } from "./types/cli";
 import { getCLIDisplayName } from "./types/cli";
+import type { GitHubIssue } from "./types/github";
+import type { MergeState } from "./types/merge";
+import type { CodexReviewResult, ReviewState } from "./types/review";
+import type { WorktreeConfig } from "./types/worktree";
 import { Icons } from "./utils/lucideIcons";
 
 export class KanbanViewProvider {
@@ -24,6 +33,17 @@ export class KanbanViewProvider {
   private quotaRefreshInterval: NodeJS.Timeout | undefined;
   private cachedCLIStatus: CLIAvailabilityStatus | null = null;
 
+  // New services for Auto-Claude features
+  private gitWorktreeService: GitWorktreeService | null = null;
+  private githubService: GitHubService | null = null;
+  private gitService: GitService | null = null;
+  private aiMergeService: AIMergeService | null = null;
+  private codexReviewService: CodexReviewService | null = null;
+
+  // Worktree and merge state
+  private activeMergeStates: Map<string, MergeState> = new Map();
+  private activeReviewStates: Map<string, ReviewState> = new Map();
+
   // Batch execution state
   private batchExecutionQueue: string[] = [];
   private currentBatchIndex = 0;
@@ -32,12 +52,18 @@ export class KanbanViewProvider {
   private batchCompletedCount = 0;
   private batchSkippedCount = 0;
 
+  // Pipeline orchestration state
+  private pipelineRetryCount: Map<string, number> = new Map();
+
   constructor(private context: vscode.ExtensionContext) {
     this.taskParser = new TaskParser();
     this.skillService = new SkillService();
     this.quotaService = new ClaudeCodeQuotaService();
     this.cliDetectionService = new CLIDetectionService();
     this.transcriptMonitorService = new TranscriptMonitorService();
+
+    // Initialize workspace-dependent services
+    this.initializeWorkspaceServices();
 
     // Listen for configuration changes to auto-refresh board
     vscode.workspace.onDidChangeConfiguration(
@@ -55,6 +81,36 @@ export class KanbanViewProvider {
       null,
       this.context.subscriptions
     );
+  }
+
+  /**
+   * Initialize workspace-dependent services.
+   * Called when workspace folders are available.
+   */
+  private initializeWorkspaceServices(): void {
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders || workspaceFolders.length === 0) {
+      return;
+    }
+
+    const workspacePath = workspaceFolders[0].uri.fsPath;
+
+    // Get worktree configuration
+    const config = vscode.workspace.getConfiguration("kaiban.worktree");
+    const worktreeConfig: WorktreeConfig = {
+      enabled: config.get<boolean>("enabled", false),
+      basePath: config.get<string>("basePath", ".worktrees"),
+      branchPrefix: config.get<string>("branchPrefix", "task/"),
+      defaultBaseBranch: config.get<string>("defaultBaseBranch", "main"),
+      autoCleanup: config.get<boolean>("autoCleanup", true),
+    };
+
+    // Initialize services
+    this.gitWorktreeService = new GitWorktreeService(workspacePath, worktreeConfig);
+    this.githubService = new GitHubService(workspacePath);
+    this.gitService = new GitService(workspacePath);
+    this.aiMergeService = new AIMergeService(workspacePath);
+    this.codexReviewService = new CodexReviewService(workspacePath);
   }
 
   /**
@@ -205,6 +261,52 @@ export class KanbanViewProvider {
             break;
           case "executeViaCLI":
             await this.handleExecuteViaCLI(message.taskId, message.cliProvider);
+            break;
+          // GitHub integration handlers
+          case "getGitHubStatus":
+            await this.handleGetGitHubStatus();
+            break;
+          case "importGitHubIssues":
+            await this.handleImportGitHubIssues(message.options);
+            break;
+          case "createPRFromTask":
+            await this.handleCreatePRFromTask(message.taskId, message.options);
+            break;
+          case "openGitHubIssue":
+            await this.handleOpenGitHubIssue(message.url);
+            break;
+          // Worktree handlers
+          case "getWorktreeStatus":
+            await this.handleGetWorktreeStatus(message.taskId);
+            break;
+          case "createWorktreeForTask":
+            await this.handleCreateWorktreeForTask(message.taskId);
+            break;
+          case "removeWorktreeForTask":
+            await this.handleRemoveWorktreeForTask(message.taskId);
+            break;
+          // Merge handlers
+          case "startMerge":
+            await this.handleStartMerge(message.taskId, message.options);
+            break;
+          case "getMergeStatus":
+            await this.handleGetMergeStatus(message.taskId);
+            break;
+          case "resolveMergeWithAI":
+            await this.handleResolveMergeWithAI(message.taskId);
+            break;
+          case "acceptMergeResolution":
+            await this.handleAcceptMergeResolution(message.taskId);
+            break;
+          case "abortMerge":
+            await this.handleAbortMerge(message.taskId);
+            break;
+          // Review handlers
+          case "startReview":
+            await this.handleStartReview(message.taskId, message.options);
+            break;
+          case "getReviewStatus":
+            await this.handleGetReviewStatus(message.taskId);
             break;
         }
       },
@@ -519,6 +621,211 @@ export class KanbanViewProvider {
           error: String(error),
         });
       }
+    }
+  }
+
+  // ============ Pipeline Orchestration Methods ============
+
+  /**
+   * Get the current retry count for a task in the pipeline.
+   */
+  private getTaskRetryCount(taskId: string): number {
+    return this.pipelineRetryCount.get(taskId) ?? 0;
+  }
+
+  /**
+   * Increment the retry count for a task in the pipeline.
+   */
+  private incrementTaskRetryCount(taskId: string): void {
+    const current = this.getTaskRetryCount(taskId);
+    this.pipelineRetryCount.set(taskId, current + 1);
+  }
+
+  /**
+   * Clear the retry count for a task (when pipeline completes or is reset).
+   */
+  private clearTaskRetryCount(taskId: string): void {
+    this.pipelineRetryCount.delete(taskId);
+  }
+
+  /**
+   * Execute task with Ralph Loop, incorporating review feedback.
+   * This forces Ralph Loop execution regardless of user settings,
+   * since we're in the pipeline's revision phase.
+   */
+  private async handleExecuteWithRalphLoop(
+    taskId: string,
+    reviewContext?: { findings?: string[]; summary?: string }
+  ): Promise<void> {
+    try {
+      // Check if task is already running
+      if (this.claudeTerminals.has(taskId)) {
+        vscode.window.showWarningMessage(
+          "Task is already running. Stop it first before starting again."
+        );
+        return;
+      }
+
+      const tasks = await this.taskParser.parseTasks();
+      const task = tasks.find((t) => t.id === taskId);
+
+      if (!task) {
+        throw new Error(`Task ${taskId} not found`);
+      }
+
+      // Get CLI configuration
+      const config = vscode.workspace.getConfiguration("kaiban");
+      const selectionMode = config.get<string>("cli.defaultProvider", "auto");
+      const status =
+        this.cachedCLIStatus ||
+        (await this.cliDetectionService.getCLIAvailabilityStatus(
+          selectionMode as "auto" | "claude" | "codex" | "cursor"
+        ));
+
+      // Must use Claude for Ralph Loop
+      const claudeCLI = status.clis.find((c) => c.name === "claude");
+      if (!claudeCLI?.available) {
+        throw new Error("Claude CLI is required for Ralph Loop execution but is not available");
+      }
+
+      const cliConfig = this.cliDetectionService.getCLIConfig("claude", {
+        get: <T>(key: string, defaultValue: T) => config.get<T>(key, defaultValue),
+      });
+
+      // Build prompt with review context
+      let taskInstruction = cliConfig.promptTemplate.replace("{taskFile}", task.filePath);
+
+      // Enhance prompt with review findings if available
+      if (reviewContext?.findings && reviewContext.findings.length > 0) {
+        const findingsContext = `
+
+REVIEW FEEDBACK TO ADDRESS:
+${reviewContext.findings.map((f, i) => `${i + 1}. ${f}`).join("\n")}
+
+Please address all the review findings above while implementing the task.`;
+        taskInstruction += findingsContext;
+      }
+
+      // Get ralph configuration - force Ralph Loop for pipeline
+      const ralphCommand = config.get<string>("ralph.command", "/ralph-loop:ralph-loop");
+      const maxIterations = config.get<number>("ralph.maxIterations", 5);
+      const completionPromise = config.get<string>("ralph.completionPromise", "TASK COMPLETE");
+
+      const flags = cliConfig.additionalFlags ? `${cliConfig.additionalFlags} ` : "";
+      const ralphCmd = `${ralphCommand} "${taskInstruction}" --completion-promise "${completionPromise}" --max-iterations ${maxIterations}`;
+      const fullCommand = `${cliConfig.executablePath} ${flags}"${ralphCmd}"`;
+
+      // Get workspace folder
+      const workspaceFolders = vscode.workspace.workspaceFolders;
+      const cwd = workspaceFolders?.[0]?.uri.fsPath;
+
+      // Create terminal
+      const terminalName = `Claude (Pipeline): ${task.label.substring(0, 20)}`;
+      const terminal = vscode.window.createTerminal({
+        name: terminalName,
+        cwd: cwd,
+      });
+
+      // Store terminal reference
+      this.claudeTerminals.set(taskId, terminal);
+
+      terminal.show();
+      terminal.sendText(fullCommand);
+
+      // Update task status to In Progress
+      await this.taskParser.updateTaskStatus(taskId, "In Progress");
+
+      // Notify user
+      vscode.window.showInformationMessage(`Pipeline: Executing with Ralph Loop: ${task.label}`);
+
+      // Notify webview
+      if (this.panel) {
+        this.panel.webview.postMessage({
+          command: "claudeExecutionStarted",
+          taskId,
+          cliProvider: "claude",
+          pipelineMode: true,
+        });
+      }
+
+      // Set up completion tracking
+      this.watchForCompletion(taskId);
+
+      // Start transcript monitoring
+      if (cwd) {
+        this.startTranscriptMonitoring(taskId, cwd);
+      }
+
+      // Refresh board
+      await this.refresh();
+    } catch (error) {
+      vscode.window.showErrorMessage(`Pipeline execution failed: ${error}`);
+      if (this.panel) {
+        this.panel.webview.postMessage({
+          command: "claudeExecutionError",
+          taskId,
+          error: String(error),
+        });
+      }
+    }
+  }
+
+  /**
+   * Handle pipeline status changes to auto-trigger appropriate actions.
+   * This is called when a task's status is manually or automatically changed.
+   */
+  private async handlePipelineStatusChange(taskId: string, newStatus: string): Promise<void> {
+    // Check if pipeline is enabled
+    const pipelineConfig = vscode.workspace.getConfiguration("kaiban.pipeline");
+    const pipelineEnabled = pipelineConfig.get<boolean>("enabled", true);
+    const autoReview = pipelineConfig.get<boolean>("autoReviewOnAIReview", true);
+
+    if (!pipelineEnabled) {
+      return; // Pipeline disabled - no auto-actions
+    }
+
+    // Handle status-specific auto-triggers
+    switch (newStatus) {
+      case "AI Review": {
+        if (autoReview) {
+          // Auto-trigger Codex review when task moves to AI Review
+          vscode.window.showInformationMessage("Pipeline: Auto-starting AI review...");
+
+          // Small delay to let status update propagate
+          setTimeout(async () => {
+            await this.handleStartReview(taskId, { useCodex: true });
+          }, 500);
+        }
+        break;
+      }
+
+      case "In Progress": {
+        // Check if task is returning from review (has review state)
+        const reviewState = this.activeReviewStates.get(taskId);
+        if (reviewState?.status === "completed" && reviewState.result) {
+          // Task returning from review - this is handled by handlePipelineReviewCompletion
+          // We don't need to do anything here since the review completion handler
+          // already manages the transition
+        }
+        break;
+      }
+
+      case "Done": {
+        // Task completed - clear pipeline state
+        this.clearTaskRetryCount(taskId);
+        this.activeReviewStates.delete(taskId);
+        break;
+      }
+
+      case "Human Review": {
+        // Clear retry count but keep review state for reference
+        this.clearTaskRetryCount(taskId);
+        break;
+      }
+
+      default:
+        // No auto-action for other statuses
+        break;
     }
   }
 
@@ -1013,6 +1320,11 @@ Implementation details and considerations.
         if (!this.claudeTerminals.has(taskId)) {
           await this.handleExecuteViaClaude(taskId);
         }
+      }
+
+      // Pipeline orchestration: auto-trigger actions based on status changes
+      if (newStatus) {
+        await this.handlePipelineStatusChange(taskId, newStatus);
       }
 
       await this.refresh();
@@ -2066,5 +2378,742 @@ ${allColumns
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#039;");
+  }
+
+  // ============ GitHub Integration Handlers ============
+
+  /**
+   * Get GitHub CLI status
+   */
+  private async handleGetGitHubStatus(): Promise<void> {
+    if (!this.panel || !this.githubService) return;
+
+    try {
+      const status = await this.githubService.getStatus();
+      this.panel.webview.postMessage({
+        command: "githubStatusUpdate",
+        data: status,
+      });
+    } catch (error) {
+      this.panel.webview.postMessage({
+        command: "githubStatusError",
+        error: String(error),
+      });
+    }
+  }
+
+  /**
+   * Import GitHub issues as tasks
+   */
+  private async handleImportGitHubIssues(options?: {
+    limit?: number;
+    state?: "open" | "closed" | "all";
+    labels?: string[];
+  }): Promise<void> {
+    if (!this.panel || !this.githubService) {
+      vscode.window.showErrorMessage("GitHub service not available");
+      return;
+    }
+
+    try {
+      const issues = await this.githubService.listIssues(options);
+
+      if (issues.length === 0) {
+        vscode.window.showInformationMessage("No issues found matching criteria");
+        return;
+      }
+
+      // Show quick pick to select issues
+      const items = issues.map((issue: GitHubIssue) => ({
+        label: `#${issue.number} ${issue.title}`,
+        description: issue.labels.join(", "),
+        picked: true,
+        issue,
+      }));
+
+      const selected = await vscode.window.showQuickPick(items, {
+        canPickMany: true,
+        placeHolder: "Select issues to import as tasks",
+      });
+
+      if (!selected || selected.length === 0) return;
+
+      // Get tasks path
+      const workspaceFolders = vscode.workspace.workspaceFolders;
+      if (!workspaceFolders) {
+        vscode.window.showErrorMessage("No workspace folder open");
+        return;
+      }
+
+      const config = vscode.workspace.getConfiguration("kaiban.task");
+      const tasksPath = path.join(
+        workspaceFolders[0].uri.fsPath,
+        config.get<string>("basePath", ".agent/TASKS")
+      );
+
+      // Create tasks from selected issues
+      const fs = await import("node:fs");
+      let createdCount = 0;
+
+      for (const item of selected) {
+        const { filePath, content } = this.githubService.generateTaskFromIssue(
+          item.issue,
+          tasksPath
+        );
+
+        // Create directory if it doesn't exist
+        const dir = path.dirname(filePath);
+        if (!fs.existsSync(dir)) {
+          fs.mkdirSync(dir, { recursive: true });
+        }
+
+        // Write task file
+        fs.writeFileSync(filePath, content, "utf-8");
+        createdCount++;
+      }
+
+      vscode.window.showInformationMessage(`Imported ${createdCount} issue(s) as tasks`);
+      await this.refresh();
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to import issues: ${error}`);
+    }
+  }
+
+  /**
+   * Create a PR from a task
+   */
+  private async handleCreatePRFromTask(
+    taskId: string,
+    options?: { draft?: boolean }
+  ): Promise<void> {
+    if (!this.panel || !this.githubService || !this.gitWorktreeService) {
+      vscode.window.showErrorMessage("Required services not available");
+      return;
+    }
+
+    try {
+      const tasks = await this.taskParser.parseTasks();
+      const task = tasks.find((t) => t.id === taskId);
+
+      if (!task) {
+        vscode.window.showErrorMessage(`Task ${taskId} not found`);
+        return;
+      }
+
+      // Get the branch name
+      let branchName: string;
+      if (task.worktree?.worktreeBranch) {
+        branchName = task.worktree.worktreeBranch;
+      } else {
+        branchName = this.gitWorktreeService.generateBranchName(taskId);
+      }
+
+      // Load PRD content if available
+      let prdContent: string | undefined;
+      if (task.prdPath) {
+        prdContent = await this.loadPRDContentRaw(task.prdPath);
+      }
+
+      // Generate PR body
+      const body = this.githubService.generatePRBody(
+        task.label,
+        task.description,
+        prdContent,
+        task.github?.issueNumber
+      );
+
+      const result = await this.githubService.createPR(branchName, {
+        title: task.label,
+        body,
+        draft: options?.draft ?? false,
+        autoFill: true,
+      });
+
+      if (result.success && result.pr) {
+        // Update task with PR metadata
+        this.taskParser.updateTaskGitHub(taskId, {
+          ...task.github,
+          prUrl: result.pr.url,
+          prNumber: result.pr.number,
+          prState: result.pr.state as "open" | "closed" | "merged" | "draft",
+          lastSynced: new Date().toISOString(),
+        });
+
+        vscode.window.showInformationMessage(`PR #${result.pr.number} created successfully`);
+        await this.refresh();
+
+        // Open PR in browser
+        vscode.env.openExternal(vscode.Uri.parse(result.pr.url));
+      } else {
+        vscode.window.showErrorMessage(`Failed to create PR: ${result.error}`);
+      }
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to create PR: ${error}`);
+    }
+  }
+
+  /**
+   * Open GitHub issue in browser
+   */
+  private async handleOpenGitHubIssue(url: string): Promise<void> {
+    if (url) {
+      await vscode.env.openExternal(vscode.Uri.parse(url));
+    }
+  }
+
+  // ============ Worktree Handlers ============
+
+  /**
+   * Get worktree status for a task
+   */
+  private async handleGetWorktreeStatus(taskId: string): Promise<void> {
+    if (!this.panel || !this.gitWorktreeService) return;
+
+    try {
+      const exists = await this.gitWorktreeService.worktreeExists(taskId);
+      const worktree = exists ? await this.gitWorktreeService.getWorktreeForTask(taskId) : null;
+
+      this.panel.webview.postMessage({
+        command: "worktreeStatusUpdate",
+        data: {
+          taskId,
+          exists,
+          worktree,
+        },
+      });
+    } catch (error) {
+      this.panel.webview.postMessage({
+        command: "worktreeStatusError",
+        taskId,
+        error: String(error),
+      });
+    }
+  }
+
+  /**
+   * Create a worktree for a task
+   */
+  private async handleCreateWorktreeForTask(taskId: string): Promise<void> {
+    if (!this.gitWorktreeService) {
+      vscode.window.showErrorMessage("Git worktree service not available");
+      return;
+    }
+
+    try {
+      const baseBranch = await this.gitWorktreeService.getDefaultBaseBranch();
+      const result = await this.gitWorktreeService.createWorktree(taskId, baseBranch);
+
+      if (result.success) {
+        // Update task with worktree metadata
+        const metadata = this.gitWorktreeService.createWorktreeMetadata(taskId, result, baseBranch);
+        this.taskParser.updateTaskWorktree(taskId, metadata);
+
+        vscode.window.showInformationMessage(`Worktree created: ${result.branchName}`);
+        await this.refresh();
+      } else {
+        vscode.window.showErrorMessage(`Failed to create worktree: ${result.error}`);
+      }
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to create worktree: ${error}`);
+    }
+  }
+
+  /**
+   * Remove a worktree for a task
+   */
+  private async handleRemoveWorktreeForTask(taskId: string): Promise<void> {
+    if (!this.gitWorktreeService) {
+      vscode.window.showErrorMessage("Git worktree service not available");
+      return;
+    }
+
+    const confirm = await vscode.window.showWarningMessage(
+      "Remove the worktree for this task? Any uncommitted changes will be lost.",
+      { modal: true },
+      "Remove"
+    );
+
+    if (confirm !== "Remove") return;
+
+    try {
+      const result = await this.gitWorktreeService.removeWorktree(taskId, true);
+
+      if (result.success) {
+        // Clear worktree metadata from task
+        this.taskParser.clearTaskWorktree(taskId);
+        vscode.window.showInformationMessage("Worktree removed");
+        await this.refresh();
+      } else {
+        vscode.window.showErrorMessage(`Failed to remove worktree: ${result.error}`);
+      }
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to remove worktree: ${error}`);
+    }
+  }
+
+  // ============ Merge Handlers ============
+
+  /**
+   * Start a merge for a task
+   */
+  private async handleStartMerge(taskId: string, options?: { useAI?: boolean }): Promise<void> {
+    if (!this.gitWorktreeService || !this.gitService) {
+      vscode.window.showErrorMessage("Git services not available");
+      return;
+    }
+
+    try {
+      const tasks = await this.taskParser.parseTasks();
+      const task = tasks.find((t) => t.id === taskId);
+
+      if (!task?.worktree?.worktreeBranch) {
+        vscode.window.showErrorMessage("No worktree branch found for this task");
+        return;
+      }
+
+      const sourceBranch = task.worktree.worktreeBranch;
+      const targetBranch =
+        task.worktree.worktreeBaseBranch || (await this.gitWorktreeService.getDefaultBaseBranch());
+
+      // Checkout target branch
+      const checkoutResult = await this.gitService.checkout(targetBranch);
+      if (!checkoutResult.success) {
+        vscode.window.showErrorMessage(
+          `Failed to checkout ${targetBranch}: ${checkoutResult.error}`
+        );
+        return;
+      }
+
+      // Start merge
+      const mergeResult = await this.gitService.startMerge(sourceBranch);
+
+      if (mergeResult.success) {
+        // No conflicts - complete the merge
+        const commitResult = await this.gitService.commitMerge(
+          `Merge task ${taskId}: ${task.label}`
+        );
+
+        if (commitResult.success) {
+          vscode.window.showInformationMessage("Merge completed successfully");
+          await this.refresh();
+        } else {
+          vscode.window.showErrorMessage(`Failed to commit merge: ${commitResult.error}`);
+        }
+      } else if (mergeResult.hasConflicts) {
+        // Store merge state
+        const conflicts = await this.gitService.getAllConflicts();
+        const mergeState: MergeState = {
+          taskId,
+          sourceBranch,
+          targetBranch,
+          status: "conflicts",
+          conflicts,
+          startedAt: new Date().toISOString(),
+        };
+        this.activeMergeStates.set(taskId, mergeState);
+
+        // Notify webview
+        if (this.panel) {
+          this.panel.webview.postMessage({
+            command: "mergeConflicts",
+            data: {
+              taskId,
+              conflictCount: conflicts.reduce((sum, f) => sum + f.conflicts.length, 0),
+              files: conflicts.map((c) => c.filePath),
+              canUseAI:
+                options?.useAI !== false && (await this.aiMergeService?.getBestProvider()) !== null,
+            },
+          });
+        }
+      } else {
+        vscode.window.showErrorMessage(`Merge failed: ${mergeResult.error}`);
+      }
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to start merge: ${error}`);
+    }
+  }
+
+  /**
+   * Get merge status for a task
+   */
+  private async handleGetMergeStatus(taskId: string): Promise<void> {
+    if (!this.panel) return;
+
+    const mergeState = this.activeMergeStates.get(taskId);
+    this.panel.webview.postMessage({
+      command: "mergeStatusUpdate",
+      data: {
+        taskId,
+        state: mergeState || null,
+      },
+    });
+  }
+
+  /**
+   * Resolve merge conflicts with AI
+   */
+  private async handleResolveMergeWithAI(taskId: string): Promise<void> {
+    if (!this.aiMergeService || !this.gitService) {
+      vscode.window.showErrorMessage("AI merge service not available");
+      return;
+    }
+
+    const mergeState = this.activeMergeStates.get(taskId);
+    if (!mergeState) {
+      vscode.window.showErrorMessage("No active merge found for this task");
+      return;
+    }
+
+    try {
+      // Update state
+      mergeState.status = "ai_resolving";
+      this.activeMergeStates.set(taskId, mergeState);
+
+      // Get task info for context
+      const tasks = await this.taskParser.parseTasks();
+      const task = tasks.find((t) => t.id === taskId);
+
+      // Load PRD if available
+      let prdContent: string | undefined;
+      if (task?.prdPath) {
+        prdContent = await this.loadPRDContentRaw(task.prdPath);
+      }
+
+      // Resolve with AI
+      const result = await this.aiMergeService.resolveConflicts({
+        taskLabel: task?.label || taskId,
+        taskDescription: task?.description || "",
+        prdContent,
+        conflicts: mergeState.conflicts,
+      });
+
+      if (result.success) {
+        mergeState.status = "review";
+        mergeState.aiResolutions = result.resolutions;
+        this.activeMergeStates.set(taskId, mergeState);
+
+        if (this.panel) {
+          this.panel.webview.postMessage({
+            command: "mergeAIResolution",
+            data: {
+              taskId,
+              resolutions: result.resolutions,
+              summary: result.summary,
+              highConfidenceCount: result.highConfidenceCount,
+              totalConflicts: result.totalConflicts,
+            },
+          });
+        }
+      } else {
+        vscode.window.showErrorMessage(`AI resolution failed: ${result.error}`);
+        mergeState.status = "conflicts";
+        this.activeMergeStates.set(taskId, mergeState);
+      }
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to resolve with AI: ${error}`);
+    }
+  }
+
+  /**
+   * Accept AI merge resolution
+   */
+  private async handleAcceptMergeResolution(taskId: string): Promise<void> {
+    if (!this.aiMergeService || !this.gitService) {
+      vscode.window.showErrorMessage("Required services not available");
+      return;
+    }
+
+    const mergeState = this.activeMergeStates.get(taskId);
+    if (!mergeState || !mergeState.aiResolutions) {
+      vscode.window.showErrorMessage("No AI resolution available");
+      return;
+    }
+
+    try {
+      // Apply resolutions
+      const applyResult = await this.aiMergeService.applyResolutions(
+        mergeState.aiResolutions,
+        mergeState.conflicts
+      );
+
+      if (!applyResult.success) {
+        vscode.window.showWarningMessage(
+          `Applied ${applyResult.appliedCount} resolutions with errors: ${applyResult.errors.join(", ")}`
+        );
+      }
+
+      // Stage all files
+      await this.gitService.stageAll();
+
+      // Get task label for commit message
+      const tasks = await this.taskParser.parseTasks();
+      const task = tasks.find((t) => t.id === taskId);
+
+      // Complete the merge
+      const commitResult = await this.gitService.commitMerge(
+        `Merge task ${taskId}: ${task?.label || "unknown"} (AI-assisted)`
+      );
+
+      if (commitResult.success) {
+        mergeState.status = "completed";
+        mergeState.completedAt = new Date().toISOString();
+        this.activeMergeStates.delete(taskId);
+
+        vscode.window.showInformationMessage("Merge completed with AI assistance");
+        await this.refresh();
+      } else {
+        vscode.window.showErrorMessage(`Failed to complete merge: ${commitResult.error}`);
+      }
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to accept resolution: ${error}`);
+    }
+  }
+
+  /**
+   * Abort an active merge
+   */
+  private async handleAbortMerge(taskId: string): Promise<void> {
+    if (!this.gitService) {
+      vscode.window.showErrorMessage("Git service not available");
+      return;
+    }
+
+    try {
+      const result = await this.gitService.abortMerge();
+
+      if (result.success) {
+        this.activeMergeStates.delete(taskId);
+        vscode.window.showInformationMessage("Merge aborted");
+        await this.refresh();
+      } else {
+        vscode.window.showErrorMessage(`Failed to abort merge: ${result.error}`);
+      }
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to abort merge: ${error}`);
+    }
+  }
+
+  // ============ Review Handlers ============
+
+  /**
+   * Start a code review for a task
+   */
+  private async handleStartReview(taskId: string, options?: { useCodex?: boolean }): Promise<void> {
+    if (!this.codexReviewService || !this.gitWorktreeService) {
+      vscode.window.showErrorMessage("Review services not available");
+      return;
+    }
+
+    try {
+      const tasks = await this.taskParser.parseTasks();
+      const task = tasks.find((t) => t.id === taskId);
+
+      if (!task) {
+        vscode.window.showErrorMessage(`Task ${taskId} not found`);
+        return;
+      }
+
+      // Check Codex availability
+      const codexStatus = await this.codexReviewService.getCodexStatus();
+
+      // Get diff for review
+      let diff: string;
+      let filesChanged: string[];
+
+      if (task.worktree?.worktreeBranch) {
+        diff = await this.gitWorktreeService.getWorktreeDiff(taskId);
+        filesChanged = await this.gitWorktreeService.getChangedFiles(taskId);
+      } else {
+        // No worktree - review recent commits (fallback)
+        vscode.window.showWarningMessage("No worktree branch found. Review will be limited.");
+        diff = "";
+        filesChanged = [];
+      }
+
+      if (!diff || diff.length === 0) {
+        vscode.window.showInformationMessage("No changes to review");
+        return;
+      }
+
+      // Store review state
+      const reviewState: ReviewState = {
+        taskId,
+        status: "in_progress",
+        startedAt: new Date().toISOString(),
+      };
+      this.activeReviewStates.set(taskId, reviewState);
+
+      // Notify webview
+      if (this.panel) {
+        this.panel.webview.postMessage({
+          command: "reviewStarted",
+          data: { taskId },
+        });
+      }
+
+      // Load PRD if available
+      let prdContent: string | undefined;
+      if (task.prdPath) {
+        prdContent = await this.loadPRDContentRaw(task.prdPath);
+      }
+
+      // Run the review
+      const result = await this.codexReviewService.runReview(
+        {
+          taskLabel: task.label,
+          taskDescription: task.description,
+          prdContent,
+          diff,
+          filesChanged,
+          focusAreas: ["bug", "security", "performance"],
+        },
+        options?.useCodex !== false && codexStatus.available
+      );
+
+      // Update state
+      reviewState.status = "completed";
+      reviewState.result = result;
+      reviewState.completedAt = new Date().toISOString();
+      this.activeReviewStates.set(taskId, reviewState);
+
+      // Notify webview
+      if (this.panel) {
+        this.panel.webview.postMessage({
+          command: "reviewComplete",
+          data: {
+            taskId,
+            result,
+            formattedResult: this.codexReviewService.formatReviewForDisplay(result),
+          },
+        });
+      }
+
+      // Show summary
+      const ratingEmoji =
+        result.overallRating === "pass" ? "✅" : result.overallRating === "needs_work" ? "⚠️" : "❌";
+      vscode.window.showInformationMessage(
+        `${ratingEmoji} Review complete: ${result.overallRating} (${result.findings.length} findings)`
+      );
+
+      // Pipeline auto-advancement logic
+      await this.handlePipelineReviewCompletion(taskId, result);
+    } catch (error) {
+      const reviewState = this.activeReviewStates.get(taskId);
+      if (reviewState) {
+        reviewState.status = "failed";
+        reviewState.error = String(error);
+        this.activeReviewStates.set(taskId, reviewState);
+      }
+
+      vscode.window.showErrorMessage(`Review failed: ${error}`);
+    }
+  }
+
+  /**
+   * Handle pipeline auto-advancement after review completion.
+   * Based on review result and configuration, either:
+   * - Pass: Execute with Ralph Loop
+   * - Fail + auto-retry: Retry with Claude (with review context)
+   * - Fail + human-review OR max retries: Move to Human Review
+   */
+  private async handlePipelineReviewCompletion(
+    taskId: string,
+    result: CodexReviewResult
+  ): Promise<void> {
+    // Check if pipeline is enabled
+    const pipelineConfig = vscode.workspace.getConfiguration("kaiban.pipeline");
+    const pipelineEnabled = pipelineConfig.get<boolean>("enabled", true);
+
+    if (!pipelineEnabled) {
+      return; // Manual pipeline - user handles transitions
+    }
+
+    const onReviewFail = pipelineConfig.get<string>("onReviewFail", "auto-retry");
+    const maxRetries = pipelineConfig.get<number>("maxRetryIterations", 2);
+
+    if (result.overallRating === "pass") {
+      // Review passed - execute with Ralph Loop for final polish
+      this.clearTaskRetryCount(taskId);
+
+      vscode.window.showInformationMessage(
+        "Pipeline: Review passed! Executing with Ralph Loop for final implementation."
+      );
+
+      // Extract findings as context (even if passed, there might be minor suggestions)
+      const reviewContext = {
+        findings: result.findings.map(
+          (f) =>
+            `[${f.severity}] ${f.description}${f.suggestion ? ` - Suggestion: ${f.suggestion}` : ""}`
+        ),
+        summary: result.summary,
+      };
+
+      await this.handleExecuteWithRalphLoop(taskId, reviewContext);
+    } else {
+      // Review failed (needs_work or critical_issues)
+      const retryCount = this.getTaskRetryCount(taskId);
+
+      if (onReviewFail === "auto-retry" && retryCount < maxRetries) {
+        // Auto-retry: increment count and re-execute with review context
+        this.incrementTaskRetryCount(taskId);
+
+        vscode.window.showWarningMessage(
+          `Pipeline: Review found issues (attempt ${retryCount + 1}/${maxRetries}). Auto-retrying with feedback.`
+        );
+
+        // Extract findings as actionable context
+        const reviewContext = {
+          findings: result.findings
+            .filter((f) => f.severity !== "info" && f.severity !== "low")
+            .map(
+              (f) =>
+                `[${f.severity}] ${f.description}${f.suggestion ? ` - Fix: ${f.suggestion}` : ""}`
+            ),
+          summary: result.summary,
+        };
+
+        // Re-execute with Ralph Loop including the review feedback
+        await this.handleExecuteWithRalphLoop(taskId, reviewContext);
+      } else {
+        // Human review required (either by config or max retries exceeded)
+        this.clearTaskRetryCount(taskId);
+
+        const reason =
+          retryCount >= maxRetries
+            ? `Max retries (${maxRetries}) exceeded`
+            : "Review requires human attention";
+
+        vscode.window.showWarningMessage(`Pipeline: ${reason}. Moving to Human Review.`);
+
+        await this.taskParser.updateTaskStatus(taskId, "Human Review");
+        await this.refresh();
+
+        // Notify webview
+        if (this.panel) {
+          this.panel.webview.postMessage({
+            command: "pipelineHumanReviewRequired",
+            taskId,
+            reason,
+            reviewResult: result,
+          });
+        }
+      }
+    }
+  }
+
+  /**
+   * Get review status for a task
+   */
+  private async handleGetReviewStatus(taskId: string): Promise<void> {
+    if (!this.panel) return;
+
+    const reviewState = this.activeReviewStates.get(taskId);
+    this.panel.webview.postMessage({
+      command: "reviewStatusUpdate",
+      data: {
+        taskId,
+        state: reviewState || null,
+      },
+    });
   }
 }

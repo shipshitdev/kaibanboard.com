@@ -54,6 +54,16 @@
         "command": "kaiban.createTask",
         "icon": "$(tasklist)",
         "title": "Kaiban: Create Task"
+      },
+      {
+        "command": "kaiban.importGitHubIssues",
+        "icon": "$(github)",
+        "title": "Kaiban: Import GitHub Issues"
+      },
+      {
+        "command": "kaiban.createPRFromTask",
+        "icon": "$(git-pull-request)",
+        "title": "Kaiban: Create PR from Task"
       }
     ],
     "configuration": {
@@ -206,6 +216,82 @@
           "type": "boolean",
           "default": false,
           "description": "Prompt to document session after task completion using session-documenter Claude plugin"
+        },
+        "kaiban.worktree.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable git worktree isolation for tasks. Each task runs in its own branch/worktree."
+        },
+        "kaiban.worktree.basePath": {
+          "type": "string",
+          "default": ".worktrees",
+          "description": "Base path for worktree directories (relative to workspace root)."
+        },
+        "kaiban.worktree.branchPrefix": {
+          "type": "string",
+          "default": "task/",
+          "description": "Prefix for worktree branch names."
+        },
+        "kaiban.worktree.defaultBaseBranch": {
+          "type": "string",
+          "default": "main",
+          "description": "Default base branch for new worktrees."
+        },
+        "kaiban.worktree.autoCleanup": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically cleanup worktrees after merge."
+        },
+        "kaiban.github.autoCloseIssue": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically close linked GitHub issue when task is marked Done."
+        },
+        "kaiban.review.preferCodex": {
+          "type": "boolean",
+          "default": true,
+          "description": "Prefer Codex CLI for code reviews (falls back to Claude if unavailable)."
+        },
+        "kaiban.merge.useAIAssist": {
+          "type": "boolean",
+          "default": true,
+          "description": "Use AI assistance for merge conflict resolution."
+        },
+        "kaiban.merge.preferredProvider": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "claude",
+            "codex"
+          ],
+          "default": "auto",
+          "description": "Preferred AI provider for merge conflict resolution."
+        },
+        "kaiban.pipeline.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable automatic pipeline orchestration (Claude → Codex Review → Claude with Ralph Loop)."
+        },
+        "kaiban.pipeline.autoReviewOnAIReview": {
+          "type": "boolean",
+          "default": true,
+          "description": "Auto-trigger Codex review when task moves to AI Review status."
+        },
+        "kaiban.pipeline.onReviewFail": {
+          "type": "string",
+          "enum": [
+            "auto-retry",
+            "human-review"
+          ],
+          "default": "auto-retry",
+          "description": "Action when review fails: auto-retry with Claude or stop at Human Review."
+        },
+        "kaiban.pipeline.maxRetryIterations": {
+          "type": "number",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 5,
+          "description": "Maximum times to retry after failed review before moving to Human Review."
         }
       }
     },

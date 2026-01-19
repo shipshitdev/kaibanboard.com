@@ -319,12 +319,48 @@ Important: Create the directory if it doesn't exist. Use a kebab-case filename b
     }
   });
 
+  // Register command to import GitHub issues
+  const importGitHubIssuesCommand = vscode.commands.registerCommand(
+    "kaiban.importGitHubIssues",
+    async () => {
+      try {
+        if (kanbanView) {
+          // Trigger the import via the kanban view
+          await kanbanView.show();
+          // The webview will handle the import via message passing
+          vscode.window.showInformationMessage(
+            "Open the Kaiban Board and use the GitHub import feature"
+          );
+        }
+      } catch (error) {
+        vscode.window.showErrorMessage(`Failed to import GitHub issues: ${error}`);
+      }
+    }
+  );
+
+  // Register command to create PR from task
+  const createPRFromTaskCommand = vscode.commands.registerCommand(
+    "kaiban.createPRFromTask",
+    async () => {
+      try {
+        if (kanbanView) {
+          await kanbanView.show();
+          vscode.window.showInformationMessage("Select a task in the Kaiban Board to create a PR");
+        }
+      } catch (error) {
+        vscode.window.showErrorMessage(`Failed to create PR: ${error}`);
+      }
+    }
+  );
+
   context.subscriptions.push(
     showBoardCommand,
     refreshBoardCommand,
     configureCommand,
     createPRDCommand,
-    createTaskCommand
+    createTaskCommand,
+    importGitHubIssuesCommand,
+    createPRFromTaskCommand
   );
 
   // Show welcome message
