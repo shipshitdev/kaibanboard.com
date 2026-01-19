@@ -139,20 +139,33 @@
             "type": "string",
             "enum": [
               "Backlog",
-              "To Do",
-              "Doing",
-              "Testing",
+              "Planning",
+              "In Progress",
+              "AI Review",
+              "Human Review",
               "Done",
+              "Archived",
               "Blocked"
             ]
           },
           "default": [
-            "To Do",
-            "Doing",
-            "Testing",
+            "Backlog",
+            "Planning",
+            "In Progress",
+            "AI Review",
+            "Human Review",
             "Done"
           ],
-          "description": "List of column names to display on the Kanban board. Valid values: 'Backlog', 'To Do', 'Doing', 'Testing', 'Done', 'Blocked'."
+          "description": "List of column names to display on the Kanban board. Valid values: 'Backlog', 'Planning', 'In Progress', 'AI Review', 'Human Review', 'Done', 'Archived', 'Blocked'."
+        },
+        "kaiban.columns.agents": {
+          "type": "object",
+          "default": {
+            "Planning": "Claude Code",
+            "In Progress": "Claude Code",
+            "AI Review": "Codex"
+          },
+          "description": "Default agent assignment per column. Valid agent values: 'Claude Code', 'Codex', 'None'."
         },
         "kaiban.prd.basePath": {
           "type": "string",

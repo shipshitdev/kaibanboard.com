@@ -37,9 +37,9 @@ export async function executeTask(
   const cliConfig = DEFAULT_CLI_CONFIGS[status.selectedProvider];
   const prompt = cliConfig.promptTemplate.replace("{taskFile}", task.filePath);
 
-  // Update task status to Doing
+  // Update task status to In Progress
   const parser = new CoreTaskParser([{ path: workspaceDir, name: "workspace" }]);
-  parser.updateTaskStatus(task.id, "Doing");
+  parser.updateTaskStatus(task.id, "In Progress");
 
   // Build command
   const args = [prompt];

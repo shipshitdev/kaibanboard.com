@@ -2,8 +2,30 @@
  * Core types shared between VS Code extension and CLI
  */
 
-export type TaskStatus = "Backlog" | "To Do" | "Doing" | "Testing" | "Done" | "Blocked";
+export type TaskStatus =
+  | "Backlog"
+  | "Planning"
+  | "In Progress"
+  | "AI Review"
+  | "Human Review"
+  | "Done"
+  | "Archived"
+  | "Blocked";
+
 export type TaskPriority = "High" | "Medium" | "Low";
+
+export type AgentType = "Claude Code" | "Codex" | "None";
+
+export const COLUMN_DEFAULT_AGENTS: Record<TaskStatus, AgentType> = {
+  Backlog: "None",
+  Planning: "Claude Code",
+  "In Progress": "Claude Code",
+  "AI Review": "Codex",
+  "Human Review": "None",
+  Done: "None",
+  Archived: "None",
+  Blocked: "None",
+};
 
 export interface Task {
   id: string;
@@ -25,6 +47,7 @@ export interface Task {
   completedAt: string;
   rejectionCount: number;
   agentNotes: string;
+  assignedAgent?: AgentType; // Override column default agent
 }
 
 export interface TaskParserConfig {
@@ -33,10 +56,12 @@ export interface TaskParserConfig {
 
 export const TASK_STATUSES: TaskStatus[] = [
   "Backlog",
-  "To Do",
-  "Doing",
-  "Testing",
+  "Planning",
+  "In Progress",
+  "AI Review",
+  "Human Review",
   "Done",
+  "Archived",
   "Blocked",
 ];
 

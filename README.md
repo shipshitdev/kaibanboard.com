@@ -89,14 +89,28 @@ Tasks are markdown files in `.agent/TASKS/`:
 **Label:** Implement user authentication
 **Description:** Add login and signup flows
 **Type:** Feature
-**Status:** To Do
+**Status:** Backlog
 **Priority:** High
 **Created:** 2024-01-15
 **Updated:** 2024-01-15
 **PRD:** [Link](../PRDS/auth-feature.md)
+**Assigned-Agent:** Claude Code
 
 ---
 ```
+
+### Workflow Columns
+
+| Column | Description | Default Agent |
+|--------|-------------|---------------|
+| Backlog | Unstarted tasks | None |
+| Planning | Tasks being planned | Claude Code |
+| In Progress | Tasks being executed | Claude Code |
+| AI Review | Awaiting AI review | Codex |
+| Human Review | Awaiting human review | None |
+| Done | Completed tasks | None |
+| Archived | Hidden | None |
+| Blocked | Hidden | None |
 
 ---
 

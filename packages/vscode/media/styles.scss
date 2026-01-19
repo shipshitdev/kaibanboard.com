@@ -15,11 +15,13 @@ $color-indigo: #6366f1;
 $color-indigo-dark: #4f46e5;
 
 // Colors - Column Status
-$color-backlog: #6b7280;
-$color-todo: #3b82f6;
-$color-doing: #8b5cf6;
-$color-testing: #f59e0b;
-$color-done: #10b981;
+$color-backlog: #6b7280;      // Gray
+$color-planning: #8b5cf6;     // Purple
+$color-in-progress: #f59e0b;  // Amber
+$color-ai-review: #06b6d4;    // Cyan
+$color-human-review: #ec4899; // Pink
+$color-done: #10b981;         // Green
+$color-archived: #64748b;     // Slate
 $color-blocked: $color-error;
 
 // Colors - Providers
@@ -336,24 +338,34 @@ select.action-btn option {
   background: rgba(107, 114, 128, 0.05);
 }
 
-.column[data-status="To Do"] {
-  border-left-color: $color-todo;
-  background: rgba(59, 130, 246, 0.05);
-}
-
-.column[data-status="Doing"] {
-  border-left-color: $color-doing;
+.column[data-status="Planning"] {
+  border-left-color: $color-planning;
   background: rgba(139, 92, 246, 0.05);
 }
 
-.column[data-status="Testing"] {
-  border-left-color: $color-testing;
+.column[data-status="In Progress"] {
+  border-left-color: $color-in-progress;
   background: rgba(245, 158, 11, 0.05);
+}
+
+.column[data-status="AI Review"] {
+  border-left-color: $color-ai-review;
+  background: rgba(6, 182, 212, 0.05);
+}
+
+.column[data-status="Human Review"] {
+  border-left-color: $color-human-review;
+  background: rgba(236, 72, 153, 0.05);
 }
 
 .column[data-status="Done"] {
   border-left-color: $color-done;
   background: rgba(16, 185, 129, 0.05);
+}
+
+.column[data-status="Archived"] {
+  border-left-color: $color-archived;
+  background: rgba(100, 116, 139, 0.05);
 }
 
 .column[data-status="Blocked"] {

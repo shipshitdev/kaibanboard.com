@@ -135,7 +135,7 @@ Ask me the following questions one at a time:
 2. What is the task description?
 3. What type is it? (Feature, Bug, Enhancement, or Research)
 4. What priority? (High, Medium, or Low)
-5. What status should it start in? (Backlog, To Do, Doing, Testing, Done, or Blocked)
+5. What status should it start in? (Backlog, Planning, In Progress, AI Review, Human Review, Done, Archived, or Blocked)
 6. Should this task be linked to an existing PRD? If so, which one? (Check ${prdBasePath} for existing PRDs)
 
 After gathering all information, create a task file at ${tasksBasePath}/<slug-based-on-title>.md with this exact structure:
@@ -186,7 +186,16 @@ Important: Create the directory if it doesn't exist. Use a kebab-case filename b
 
   // Register command to configure board settings
   const configureCommand = vscode.commands.registerCommand("kaiban.configure", async () => {
-    const allValidColumns = ["Backlog", "To Do", "Doing", "Testing", "Done", "Blocked"];
+    const allValidColumns = [
+      "Backlog",
+      "Planning",
+      "In Progress",
+      "AI Review",
+      "Human Review",
+      "Done",
+      "Archived",
+      "Blocked",
+    ];
     const columnsConfig = vscode.workspace.getConfiguration("kaiban.columns");
     const prdConfig = vscode.workspace.getConfiguration("kaiban.prd");
     const taskConfig = vscode.workspace.getConfiguration("kaiban.task");
@@ -220,9 +229,11 @@ Important: Create the directory if it doesn't exist. Use a kebab-case filename b
     if (configOption.option === "columns") {
       // Configure columns
       const currentColumns = columnsConfig.get<string[]>("enabled", [
-        "To Do",
-        "Doing",
-        "Testing",
+        "Backlog",
+        "Planning",
+        "In Progress",
+        "AI Review",
+        "Human Review",
         "Done",
       ]);
 

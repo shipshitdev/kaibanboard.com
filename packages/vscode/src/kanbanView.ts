@@ -483,8 +483,8 @@ export class KanbanViewProvider {
       terminal.show();
       terminal.sendText(fullCommand);
 
-      // Update task status to Doing
-      await this.taskParser.updateTaskStatus(taskId, "Doing");
+      // Update task status to In Progress
+      await this.taskParser.updateTaskStatus(taskId, "In Progress");
 
       // Notify user
       vscode.window.showInformationMessage(
@@ -971,7 +971,15 @@ Implementation details and considerations.
     try {
       await this.taskParser.updateTaskStatus(
         taskId,
-        newStatus as "Backlog" | "To Do" | "Doing" | "Testing" | "Done" | "Blocked"
+        newStatus as
+          | "Backlog"
+          | "Planning"
+          | "In Progress"
+          | "AI Review"
+          | "Human Review"
+          | "Done"
+          | "Archived"
+          | "Blocked"
       );
       // Refresh the board after updating
       await this.refresh();
@@ -1185,7 +1193,7 @@ Implementation details and considerations.
       const tasks = await this.taskParser.parseTasks();
       const task = tasks.find((t) => t.id === taskId);
 
-      if (task && (task.status === "Done" || task.status === "Testing")) {
+      if (task && (task.status === "Done" || task.status === "Human Review")) {
         // Task completed - clean up (including terminal reference)
         this.cleanupTaskTracking(taskId, true);
 
@@ -1432,8 +1440,8 @@ Implementation details and considerations.
       terminal.show();
       terminal.sendText(fullCommand);
 
-      // Update task status to Doing
-      await this.taskParser.updateTaskStatus(taskId, "Doing");
+      // Update task status to In Progress
+      await this.taskParser.updateTaskStatus(taskId, "In Progress");
 
       // Set up completion tracking for batch
       this.watchForBatchCompletion(taskId);
@@ -1482,7 +1490,7 @@ Implementation details and considerations.
       const tasks = await this.taskParser.parseTasks();
       const task = tasks.find((t) => t.id === taskId);
 
-      if (task && (task.status === "Done" || task.status === "Testing")) {
+      if (task && (task.status === "Done" || task.status === "Human Review")) {
         // Task completed successfully
         this.cleanupTaskTracking(taskId, true);
         this.batchCompletedCount++;
@@ -1673,11 +1681,27 @@ Implementation details and considerations.
 
   private async getWebviewContent(groupedTasks: Record<string, Task[]>): Promise<string> {
     // All possible columns
-    const allColumns = ["Backlog", "To Do", "Doing", "Testing", "Done", "Blocked"];
+    const allColumns = [
+      "Backlog",
+      "Planning",
+      "In Progress",
+      "AI Review",
+      "Human Review",
+      "Done",
+      "Archived",
+      "Blocked",
+    ];
 
     // Get configured columns from settings
     const config = vscode.workspace.getConfiguration("kaiban.columns");
-    const enabledColumns = config.get<string[]>("enabled", ["To Do", "Doing", "Testing", "Done"]);
+    const enabledColumns = config.get<string[]>("enabled", [
+      "Backlog",
+      "Planning",
+      "In Progress",
+      "AI Review",
+      "Human Review",
+      "Done",
+    ]);
 
     // Sort function: Order first (ascending), then priority (High > Medium > Low)
     const sortTasksByOrderAndPriority = (tasks: Task[]) => {
@@ -1723,14 +1747,16 @@ Implementation details and considerations.
     const renderTask = (task: Task) => {
       const priorityClass = task.priority.toLowerCase();
       const completedClass = task.completed ? "completed" : "";
-      const isInTesting = task.status === "Testing";
-      const isInToDo = task.status === "To Do";
-      const isInDoing = task.status === "Doing";
+      const isInPlanning = task.status === "Planning";
+      const isInProgress = task.status === "In Progress";
+      const isInAIReview = task.status === "AI Review";
       // Check if task is running via Claude terminal (but not if already Done)
       const isRunningViaClaude = runningTaskIds.has(task.id) && task.status !== "Done";
       const runningClass = isRunningViaClaude ? "running" : "";
       const canExecuteViaClaude =
-        (isInToDo || isInDoing || isInTesting) && !isRunningViaClaude && task.status !== "Done";
+        (isInPlanning || isInProgress || isInAIReview) &&
+        !isRunningViaClaude &&
+        task.status !== "Done";
 
       return `
         <div class="task-card ${priorityClass} ${completedClass} ${runningClass}"
@@ -1880,7 +1906,7 @@ Implementation details and considerations.
 **Label:** My Task Title
 **Description:** Task description
 **Type:** Feature
-**Status:** To Do
+**Status:** Backlog
 **Priority:** Medium
 **Created:** ${new Date().toISOString().split("T")[0]}
 **Updated:** ${new Date().toISOString().split("T")[0]}
@@ -1914,11 +1940,13 @@ ${allColumns
     const columnClass = column.toLowerCase().replace(/\s+/g, "-");
     const isHidden = !enabledColumns.includes(column);
     const emptyMessages: Record<string, string> = {
-      Backlog: "No tasks in backlog",
-      "To Do": "No tasks to do",
-      Doing: "No tasks in progress",
-      Testing: "No tasks in testing",
+      Backlog: "Drop tasks here to add to backlog",
+      Planning: "Tasks being planned by agents",
+      "In Progress": "Tasks being executed",
+      "AI Review": "Tasks awaiting AI review",
+      "Human Review": "Tasks awaiting human review",
       Done: "No completed tasks",
+      Archived: "No archived tasks",
       Blocked: "No blocked tasks",
     };
     const emptyMessage = emptyMessages[column];
@@ -1929,7 +1957,7 @@ ${allColumns
         <span>${column}</span>
         <div class="column-header-actions">
           ${
-            column === "To Do" && tasks.length > 0
+            column === "Planning" && tasks.length > 0
               ? `<button class="play-all-btn" onclick="event.stopPropagation(); toggleBatchExecution()" title="Execute all tasks via Claude CLI">
                   ${Icons.play(12)} Play All
                 </button>`

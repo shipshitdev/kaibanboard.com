@@ -92,6 +92,9 @@ export class CoreTaskParser {
           noteIdx++;
         }
         metadata.agentNotes = noteLines.join("\n");
+      } else if (line.startsWith("**Assigned-Agent:**")) {
+        const match = line.match(/^\*\*Assigned-Agent:\*\*\s*(.+)$/);
+        if (match) metadata.assignedAgent = match[1].trim();
       } else if (line.startsWith("---") && inMetadataSection) {
         break;
       }
@@ -104,7 +107,7 @@ export class CoreTaskParser {
       label: String(metadata.label || label),
       description: String(metadata.description || ""),
       type: String(metadata.type || "Task"),
-      status: (metadata.status as Task["status"]) || "To Do",
+      status: (metadata.status as Task["status"]) || "Backlog",
       priority: (metadata.priority as Task["priority"]) || "Medium",
       created: String(metadata.created || ""),
       updated: String(metadata.updated || ""),
@@ -118,6 +121,7 @@ export class CoreTaskParser {
       completedAt: String(metadata.completedAt || ""),
       rejectionCount: (metadata.rejectionCount as number) || 0,
       agentNotes: String(metadata.agentNotes || ""),
+      assignedAgent: metadata.assignedAgent as Task["assignedAgent"],
     };
   }
 
@@ -196,10 +200,12 @@ export class CoreTaskParser {
   public groupByStatus(tasks: Task[]): Record<string, Task[]> {
     const grouped: Record<string, Task[]> = {
       Backlog: [],
-      "To Do": [],
-      Doing: [],
-      Testing: [],
+      Planning: [],
+      "In Progress": [],
+      "AI Review": [],
+      "Human Review": [],
       Done: [],
+      Archived: [],
       Blocked: [],
     };
 

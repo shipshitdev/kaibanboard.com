@@ -21,13 +21,13 @@ const cli = meow(
 
   Options
     --columns, -c  Columns to display (comma-separated)
-                   Default: To Do,Doing,Testing,Done
-                   Available: Backlog,To Do,Doing,Testing,Done,Blocked
+                   Default: Backlog,Planning,In Progress,AI Review,Human Review,Done
+                   Available: Backlog,Planning,In Progress,AI Review,Human Review,Done,Archived,Blocked
 
   Examples
     $ kai
     $ kai /path/to/project
-    $ kai --columns "Backlog,To Do,Doing,Done"
+    $ kai --columns "Backlog,Planning,In Progress,Done"
 `,
   {
     importMeta: import.meta,
@@ -35,7 +35,7 @@ const cli = meow(
       columns: {
         type: "string",
         shortFlag: "c",
-        default: "To Do,Doing,Testing,Done",
+        default: "Backlog,Planning,In Progress,AI Review,Human Review,Done",
       },
     },
   }
@@ -64,7 +64,16 @@ function main() {
   const columns = cli.flags.columns.split(",").map((c) => c.trim()) as TaskStatus[];
 
   // Validate columns
-  const validColumns: TaskStatus[] = ["Backlog", "To Do", "Doing", "Testing", "Done", "Blocked"];
+  const validColumns: TaskStatus[] = [
+    "Backlog",
+    "Planning",
+    "In Progress",
+    "AI Review",
+    "Human Review",
+    "Done",
+    "Archived",
+    "Blocked",
+  ];
   for (const col of columns) {
     if (!validColumns.includes(col)) {
       console.error(`Error: Invalid column "${col}"`);

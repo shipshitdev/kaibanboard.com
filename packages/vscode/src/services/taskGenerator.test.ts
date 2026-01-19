@@ -31,13 +31,13 @@ describe("generateSimpleTaskTemplate", () => {
       label: "Bug Fix",
       description: "Fix the login bug",
       type: "Bug",
-      status: "To Do",
+      status: "Planning",
       priority: "High",
       prdPath: "../PRDS/auth-prd.md",
     });
 
     expect(template).toContain("**Type:** Bug");
-    expect(template).toContain("**Status:** To Do");
+    expect(template).toContain("**Status:** Planning");
     expect(template).toContain("**Priority:** High");
     expect(template).toContain("**Description:** Fix the login bug");
     expect(template).toContain("**PRD:** [Link](../PRDS/auth-prd.md)");

@@ -6,10 +6,12 @@ import type { TaskPriority, TaskStatus } from "@kaibanboard/core";
 
 export const STATUS_COLORS: Record<TaskStatus, string> = {
   Backlog: "gray",
-  "To Do": "blue",
-  Doing: "yellow",
-  Testing: "magenta",
+  Planning: "magenta",
+  "In Progress": "yellow",
+  "AI Review": "cyan",
+  "Human Review": "magentaBright",
   Done: "green",
+  Archived: "gray",
   Blocked: "red",
 };
 

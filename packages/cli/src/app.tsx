@@ -19,7 +19,10 @@ interface AppProps {
   columns?: TaskStatus[];
 }
 
-export function App({ workspaceDir, columns = ["To Do", "Doing", "Testing", "Done"] }: AppProps) {
+export function App({
+  workspaceDir,
+  columns = ["Backlog", "Planning", "In Progress", "AI Review", "Human Review", "Done"],
+}: AppProps) {
   const { exit } = useApp();
   const { groupedTasks, loading, error, refresh, updateTaskStatus } = useTasks(workspaceDir);
   const cli = useCLI();
