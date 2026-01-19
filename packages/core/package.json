@@ -1,0 +1,30 @@
+{
+  "name": "@kaibanboard/core",
+  "version": "0.3.1",
+  "description": "Core types and task parser for Kaiban Board",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/shipshitdev/kaibanboard.com",
+    "directory": "packages/core"
+  }
+}

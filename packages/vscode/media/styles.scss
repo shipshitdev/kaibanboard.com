@@ -1,3 +1,98 @@
+// ===========================================
+// SCSS Variables
+// ===========================================
+
+// Colors - Status
+$color-success: #22c55e;
+$color-success-dark: #16a34a;
+$color-success-alt: #4caf50;
+$color-error: #ef4444;
+$color-error-dark: #dc2626;
+$color-error-alt: #f44336;
+$color-warning: #eab308;
+$color-warning-dark: #ca8a04;
+$color-indigo: #6366f1;
+$color-indigo-dark: #4f46e5;
+
+// Colors - Column Status
+$color-backlog: #6b7280;
+$color-todo: #3b82f6;
+$color-doing: #8b5cf6;
+$color-testing: #f59e0b;
+$color-done: #10b981;
+$color-blocked: $color-error;
+
+// Colors - Providers
+$color-cursor: $color-indigo;
+$color-openai: #10a37f;
+$color-openrouter: #a855f7;
+$color-replicate: $color-warning;
+
+// Priority colors
+$color-priority-high: $color-error-alt;
+$color-priority-medium: #ff9800;
+$color-priority-low: $color-success-alt;
+
+// Spacing
+$spacing-xs: 2px;
+$spacing-sm: 4px;
+$spacing-md: 6px;
+$spacing-base: 8px;
+$spacing-lg: 12px;
+$spacing-xl: 16px;
+$spacing-2xl: 20px;
+
+// Border radius
+$radius-sm: 3px;
+$radius-base: 4px;
+$radius-md: 6px;
+$radius-lg: 8px;
+$radius-pill: 10px;
+
+// Transitions
+$transition-fast: 0.15s ease;
+$transition-base: 0.2s;
+$transition-slow: 0.3s ease-in-out;
+
+// ===========================================
+// Mixins
+// ===========================================
+
+@mixin webkit-scrollbar {
+  &::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: var(--vscode-scrollbarSlider-background);
+    border-radius: $radius-base;
+
+    &:hover {
+      background: var(--vscode-scrollbarSlider-hoverBackground);
+    }
+  }
+}
+
+@mixin flex-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+@mixin flex-between {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+// ===========================================
+// Base Styles
+// ===========================================
+
 * {
   margin: 0;
   padding: 0;
@@ -237,32 +332,32 @@ select.action-btn option {
 }
 
 .column[data-status="Backlog"] {
-  border-left-color: #6b7280;
+  border-left-color: $color-backlog;
   background: rgba(107, 114, 128, 0.05);
 }
 
 .column[data-status="To Do"] {
-  border-left-color: #3b82f6;
+  border-left-color: $color-todo;
   background: rgba(59, 130, 246, 0.05);
 }
 
 .column[data-status="Doing"] {
-  border-left-color: #8b5cf6;
+  border-left-color: $color-doing;
   background: rgba(139, 92, 246, 0.05);
 }
 
 .column[data-status="Testing"] {
-  border-left-color: #f59e0b;
+  border-left-color: $color-testing;
   background: rgba(245, 158, 11, 0.05);
 }
 
 .column[data-status="Done"] {
-  border-left-color: #10b981;
+  border-left-color: $color-done;
   background: rgba(16, 185, 129, 0.05);
 }
 
 .column[data-status="Blocked"] {
-  border-left-color: #ef4444;
+  border-left-color: $color-error;
   background: rgba(239, 68, 68, 0.05);
 }
 
@@ -348,7 +443,7 @@ select.action-btn option {
 }
 
 .task-check {
-  color: #4caf50;
+  color: $color-success-alt;
   font-size: 18px;
   margin-left: 8px;
 }
@@ -370,7 +465,7 @@ select.action-btn option {
 
 .priority-high {
   background: rgba(244, 67, 54, 0.2);
-  color: #f44336;
+  color: $color-error-alt;
 }
 
 .priority-medium {
@@ -380,7 +475,7 @@ select.action-btn option {
 
 .priority-low {
   background: rgba(76, 175, 80, 0.2);
-  color: #4caf50;
+  color: $color-success-alt;
 }
 
 .type {
@@ -395,7 +490,7 @@ select.action-btn option {
 
 .rejection-badge {
   background: rgba(244, 67, 54, 0.2);
-  color: #f44336;
+  color: $color-error-alt;
 }
 
 .task-footer {
@@ -418,8 +513,8 @@ select.action-btn option {
 
 .agent-btn {
   background: rgba(99, 102, 241, 0.2);
-  color: #6366f1;
-  border: 1px solid #6366f1;
+  color: $color-indigo;
+  border: 1px solid $color-indigo;
   padding: 4px 8px;
   border-radius: 4px;
   font-size: 12px;
@@ -433,26 +528,26 @@ select.action-btn option {
 }
 
 .agent-btn:hover {
-  background: #6366f1;
+  background: $color-indigo;
   color: white;
 }
 
 /* Agent status indicators */
 .task-card.agent-running {
-  border-left: 3px solid #6366f1;
+  border-left: 3px solid $color-indigo;
 }
 
 .task-card.agent-completed {
-  border-left: 3px solid #22c55e;
+  border-left: 3px solid $color-success;
 }
 
 .task-card.agent-error {
-  border-left: 3px solid #ef4444;
+  border-left: 3px solid $color-error;
 }
 
 .agent-running-badge {
   background: rgba(99, 102, 241, 0.2);
-  color: #6366f1;
+  color: $color-indigo;
   animation: pulse 2s infinite;
 }
 
@@ -494,18 +589,18 @@ select.action-btn option {
 
 /* Stop button - red when running */
 .play-stop-btn.running {
-  background: #ef4444;
+  background: $color-error;
   color: white;
 }
 
 .play-stop-btn.running:hover {
-  background: #dc2626;
+  background: $color-error-dark;
 }
 
 /* Rate limit trigger button - shows next to stop button when running */
 .rate-limit-btn {
   display: none;
-  background: #eab308;
+  background: $color-warning;
   color: black;
   border: none;
   border-radius: 4px;
@@ -523,13 +618,13 @@ select.action-btn option {
 }
 
 .rate-limit-btn:hover {
-  background: #ca8a04;
+  background: $color-warning-dark;
 }
 
 /* Running state for task cards - prominent visual */
 .task-card.running {
   background: linear-gradient(135deg, rgba(34, 197, 94, 0.15) 0%, rgba(34, 197, 94, 0.05) 100%);
-  border-left: 4px solid #22c55e;
+  border-left: 4px solid $color-success;
   box-shadow: 0 0 12px rgba(34, 197, 94, 0.3);
   position: relative;
   overflow: hidden;
@@ -543,7 +638,7 @@ select.action-btn option {
   left: 0;
   right: 0;
   height: 2px;
-  background: linear-gradient(90deg, transparent, #22c55e, transparent);
+  background: linear-gradient(90deg, transparent, $color-success, transparent);
   animation: running-bar 1.5s ease-in-out infinite;
 }
 
@@ -575,7 +670,7 @@ select.action-btn option {
 
 .progress-tool-name {
   font-weight: 600;
-  color: #22c55e;
+  color: $color-success;
   white-space: nowrap;
   flex-shrink: 0;
 }
@@ -590,7 +685,7 @@ select.action-btn option {
 /* Rate limit countdown state */
 .task-card.rate-limited {
   background: linear-gradient(135deg, rgba(234, 179, 8, 0.15) 0%, rgba(234, 179, 8, 0.05) 100%);
-  border-left: 4px solid #eab308;
+  border-left: 4px solid $color-warning;
   box-shadow: 0 0 12px rgba(234, 179, 8, 0.3);
   position: relative;
 }
@@ -617,7 +712,7 @@ select.action-btn option {
 .countdown-timer {
   font-size: 24px;
   font-weight: bold;
-  color: #eab308;
+  color: $color-warning;
   font-family: monospace;
 }
 
@@ -641,21 +736,21 @@ select.action-btn option {
 }
 
 .countdown-btn.retry-now {
-  background: #22c55e;
+  background: $color-success;
   color: white;
 }
 
 .countdown-btn.retry-now:hover {
-  background: #16a34a;
+  background: $color-success-dark;
 }
 
 .countdown-btn.cancel {
-  background: #ef4444;
+  background: $color-error;
   color: white;
 }
 
 .countdown-btn.cancel:hover {
-  background: #dc2626;
+  background: $color-error-dark;
 }
 
 /* Rate limit banner - fixed at top */
@@ -664,7 +759,7 @@ select.action-btn option {
   top: 0;
   left: 0;
   right: 0;
-  background: linear-gradient(90deg, #eab308, #ca8a04);
+  background: linear-gradient(90deg, $color-warning, $color-warning-dark);
   color: black;
   padding: 12px 20px;
   display: none;
@@ -708,7 +803,7 @@ select.action-btn option {
 }
 
 .rate-limit-banner-actions .retry-btn {
-  background: #22c55e;
+  background: $color-success;
   color: white;
 }
 
@@ -786,22 +881,22 @@ body.has-rate-limit-banner {
 
 .provider-cursor {
   background: rgba(99, 102, 241, 0.2);
-  color: #6366f1;
+  color: $color-indigo;
 }
 
 .provider-openai {
   background: rgba(16, 163, 127, 0.2);
-  color: #10a37f;
+  color: $color-openai;
 }
 
 .provider-openrouter {
   background: rgba(168, 85, 247, 0.2);
-  color: #a855f7;
+  color: $color-openrouter;
 }
 
 .provider-replicate {
   background: rgba(234, 179, 8, 0.2);
-  color: #eab308;
+  color: $color-warning;
 }
 
 /* Reject Modal */
@@ -865,12 +960,12 @@ body.has-rate-limit-banner {
 }
 
 .modal-btn-send {
-  background: #6366f1;
+  background: $color-indigo;
   color: white;
 }
 
 .modal-btn-send:hover {
-  background: #4f46e5;
+  background: $color-indigo-dark;
 }
 
 .modal-btn-send:disabled {
@@ -965,8 +1060,8 @@ body.has-rate-limit-banner {
 
 .no-providers-warning {
   background: rgba(244, 67, 54, 0.1);
-  border: 1px solid #f44336;
-  color: #f44336;
+  border: 1px solid $color-error-alt;
+  color: $color-error-alt;
   padding: 12px;
   border-radius: 6px;
   margin-bottom: 15px;
@@ -974,7 +1069,7 @@ body.has-rate-limit-banner {
 }
 
 .no-providers-warning a {
-  color: #f44336;
+  color: $color-error-alt;
   text-decoration: underline;
 }
 
@@ -1024,22 +1119,9 @@ body.has-rate-limit-banner {
   line-height: 1.6;
 }
 
-/* Scrollbar */
-.column-content::-webkit-scrollbar {
-  width: 8px;
-}
-
-.column-content::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.column-content::-webkit-scrollbar-thumb {
-  background: var(--vscode-scrollbarSlider-background);
-  border-radius: 4px;
-}
-
-.column-content::-webkit-scrollbar-thumb:hover {
-  background: var(--vscode-scrollbarSlider-hoverBackground);
+// Scrollbar - using mixin
+.column-content {
+  @include webkit-scrollbar;
 }
 
 .prd-sidebar {
@@ -1287,11 +1369,11 @@ body.has-rate-limit-banner {
 }
 
 .play-all-btn.running {
-  background: #ef4444;
+  background: $color-error;
 }
 
 .play-all-btn.running:hover {
-  background: #dc2626;
+  background: $color-error-dark;
 }
 
 .play-all-btn:disabled {
@@ -1430,21 +1512,8 @@ body.has-rate-limit-banner {
   word-wrap: break-word;
 }
 
-.terminal-content::-webkit-scrollbar {
-  width: 8px;
-}
-
-.terminal-content::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.terminal-content::-webkit-scrollbar-thumb {
-  background: var(--vscode-scrollbarSlider-background);
-  border-radius: 4px;
-}
-
-.terminal-content::-webkit-scrollbar-thumb:hover {
-  background: var(--vscode-scrollbarSlider-hoverBackground);
+.terminal-content {
+  @include webkit-scrollbar;
 }
 
 .terminal-output-line {
@@ -1453,11 +1522,11 @@ body.has-rate-limit-banner {
 }
 
 .terminal-output-line.error {
-  color: #f44336;
+  color: $color-error-alt;
 }
 
 .terminal-output-line.success {
-  color: #4caf50;
+  color: $color-success-alt;
 }
 
 .terminal-output-line.info {
@@ -1573,15 +1642,15 @@ body.has-rate-limit-banner {
 }
 
 .quota-bar-fill[data-status="good"] {
-  background: #22c55e;
+  background: $color-success;
 }
 
 .quota-bar-fill[data-status="warning"] {
-  background: #eab308;
+  background: $color-warning;
 }
 
 .quota-bar-fill[data-status="critical"] {
-  background: #ef4444;
+  background: $color-error;
 }
 
 .quota-value {
@@ -1593,15 +1662,15 @@ body.has-rate-limit-banner {
 }
 
 .quota-value[data-status="good"] {
-  color: #22c55e;
+  color: $color-success;
 }
 
 .quota-value[data-status="warning"] {
-  color: #eab308;
+  color: $color-warning;
 }
 
 .quota-value[data-status="critical"] {
-  color: #ef4444;
+  color: $color-error;
 }
 
 .quota-refresh-btn {
@@ -1628,7 +1697,7 @@ body.has-rate-limit-banner {
 }
 
 .quota-error {
-  color: var(--vscode-errorForeground, #f44336);
+  color: var(--vscode-errorForeground, $color-error-alt);
   font-size: 11px;
   display: flex;
   align-items: center;
@@ -1699,20 +1768,7 @@ body.has-rate-limit-banner {
   flex-shrink: 0;
 }
 
-/* Scrollbar for PRD edit textarea */
-.prd-edit-textarea::-webkit-scrollbar {
-  width: 8px;
-}
-
-.prd-edit-textarea::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.prd-edit-textarea::-webkit-scrollbar-thumb {
-  background: var(--vscode-scrollbarSlider-background);
-  border-radius: 4px;
-}
-
-.prd-edit-textarea::-webkit-scrollbar-thumb:hover {
-  background: var(--vscode-scrollbarSlider-hoverBackground);
+// Scrollbar for PRD edit textarea
+.prd-edit-textarea {
+  @include webkit-scrollbar;
 }

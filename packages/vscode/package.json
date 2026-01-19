@@ -1,0 +1,237 @@
+{
+  "name": "kaibanboardcom",
+  "displayName": "Kaiban Board",
+  "version": "0.3.1",
+  "description": "Kanban board for Claude CLI task management. Execute markdown tasks via Claude Code directly from your board.",
+  "publisher": "shipshitdev",
+  "author": "Kaiban Board Contributors",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/shipshitdev/kaibanboard.com",
+    "directory": "packages/vscode"
+  },
+  "icon": "assets/icon.png",
+  "engines": {
+    "vscode": "^1.105.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "kanban",
+    "markdown",
+    "task-management",
+    "ai",
+    "productivity",
+    "agent",
+    "vscode-extension"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "kaiban.showBoard",
+        "icon": "$(kanban)",
+        "title": "Kaiban: Show Markdown Board"
+      },
+      {
+        "command": "kaiban.refreshBoard",
+        "icon": "$(refresh)",
+        "title": "Kaiban: Refresh Board"
+      },
+      {
+        "command": "kaiban.configure",
+        "icon": "$(settings-gear)",
+        "title": "Kaiban: Configure Board Settings"
+      },
+      {
+        "command": "kaiban.createPRD",
+        "icon": "$(file-text)",
+        "title": "Kaiban: Create PRD"
+      },
+      {
+        "command": "kaiban.createTask",
+        "icon": "$(tasklist)",
+        "title": "Kaiban: Create Task"
+      }
+    ],
+    "configuration": {
+      "title": "Kaiban Board",
+      "properties": {
+        "kaiban.claude.executablePath": {
+          "type": "string",
+          "default": "claude",
+          "description": "Path to Claude CLI executable"
+        },
+        "kaiban.claude.additionalFlags": {
+          "type": "string",
+          "default": "",
+          "description": "Additional flags to pass to Claude CLI (e.g., --dangerously-skip-permissions)"
+        },
+        "kaiban.claude.promptTemplate": {
+          "type": "string",
+          "default": "Read the task file at {taskFile} and implement it. The task contains a link to the PRD with full requirements. Update the task status to Done when complete.",
+          "description": "Prompt template for Claude execution. Use {taskFile} for the task file path."
+        },
+        "kaiban.claude.useRalphLoop": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use /ralph-loop plugin if available. When false, runs Claude directly with the task."
+        },
+        "kaiban.claude.executionTimeout": {
+          "type": "number",
+          "default": 30,
+          "minimum": 5,
+          "maximum": 120,
+          "description": "Maximum time in minutes to wait for task execution to complete before cleaning up tracking resources."
+        },
+        "kaiban.cli.defaultProvider": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "claude",
+            "codex",
+            "cursor"
+          ],
+          "enumDescriptions": [
+            "Automatically select the first available CLI (Claude > Codex > Cursor)",
+            "Use Claude CLI (claude command)",
+            "Use Codex CLI (codex command)",
+            "Use Cursor CLI (cursor command)"
+          ],
+          "default": "auto",
+          "description": "Default CLI provider for task execution. Use 'auto' to automatically select the first available CLI."
+        },
+        "kaiban.codex.executablePath": {
+          "type": "string",
+          "default": "codex",
+          "description": "Path to Codex CLI executable"
+        },
+        "kaiban.codex.additionalFlags": {
+          "type": "string",
+          "default": "",
+          "description": "Additional flags to pass to Codex CLI"
+        },
+        "kaiban.codex.promptTemplate": {
+          "type": "string",
+          "default": "Read the task file at {taskFile} and implement it. The task contains a link to the PRD with full requirements. Update the task status to Done when complete.",
+          "description": "Prompt template for Codex execution. Use {taskFile} for the task file path."
+        },
+        "kaiban.cursor.executablePath": {
+          "type": "string",
+          "default": "cursor",
+          "description": "Path to Cursor CLI executable"
+        },
+        "kaiban.cursor.additionalFlags": {
+          "type": "string",
+          "default": "",
+          "description": "Additional flags to pass to Cursor CLI"
+        },
+        "kaiban.cursor.promptTemplate": {
+          "type": "string",
+          "default": "Read the task file at {taskFile} and implement it. The task contains a link to the PRD with full requirements. Update the task status to Done when complete.",
+          "description": "Prompt template for Cursor execution. Use {taskFile} for the task file path."
+        },
+        "kaiban.columns.enabled": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "Backlog",
+              "To Do",
+              "Doing",
+              "Testing",
+              "Done",
+              "Blocked"
+            ]
+          },
+          "default": [
+            "To Do",
+            "Doing",
+            "Testing",
+            "Done"
+          ],
+          "description": "List of column names to display on the Kanban board. Valid values: 'Backlog', 'To Do', 'Doing', 'Testing', 'Done', 'Blocked'."
+        },
+        "kaiban.prd.basePath": {
+          "type": "string",
+          "default": ".agent/PRDS",
+          "description": "Base path for PRD (Product Requirements Document) files. PRD paths in task files will be resolved relative to this path."
+        },
+        "kaiban.task.basePath": {
+          "type": "string",
+          "default": ".agent/TASKS",
+          "description": "Base path for task files. Tasks will be created in and scanned from this directory."
+        },
+        "kaiban.ralph.command": {
+          "type": "string",
+          "default": "/ralph-loop:ralph-loop",
+          "description": "Ralph command to execute. Can be a Claude Code plugin command (e.g., /ralph-loop:ralph-loop) or a bash script path (e.g., bash /path/to/ralph-loop.sh)"
+        },
+        "kaiban.ralph.maxIterations": {
+          "type": "number",
+          "default": 5,
+          "description": "Maximum iterations for ralph-loop command"
+        },
+        "kaiban.ralph.completionPromise": {
+          "type": "string",
+          "default": "",
+          "description": "Completion promise template for ralph-loop. If empty, will use task description as completion signal."
+        },
+        "kaiban.skills.useAgentFolderInit": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use agent-folder-init Claude plugin to scaffold .agent/ folder (requires plugin installed via Claude CLI)"
+        },
+        "kaiban.skills.useTaskPrdCreator": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use task-prd-creator Claude plugin when creating tasks (requires plugin installed via Claude CLI)"
+        },
+        "kaiban.skills.useSessionDocumenter": {
+          "type": "boolean",
+          "default": false,
+          "description": "Prompt to document session after task completion using session-documenter Claude plugin"
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "kaibanboard",
+          "title": "Kaiban Board",
+          "icon": "$(checklist)"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "scss:build": "sass media/styles.scss media/styles.css",
+    "scss:watch": "sass --watch media/styles.scss:media/styles.css",
+    "compile": "bun run scss:build && tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "bun run compile",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "package": "bun run compile && mkdir -p build && vsce package --no-dependencies --out build/",
+    "vscode:prepublish": "bun run compile"
+  },
+  "dependencies": {
+    "@kaibanboard/core": "workspace:*",
+    "lucide": "0.562.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.3.11",
+    "@types/node": "22.15.29",
+    "@types/vscode": "1.105.0",
+    "@vitest/coverage-v8": "4.0.17",
+    "@vitest/ui": "4.0.17",
+    "@vscode/vsce": "3.7.1",
+    "husky": "9.1.7",
+    "lint-staged": "16.2.7",
+    "playwright": "1.57.0",
+    "typescript": "5.9.3",
+    "vitest": "4.0.17"
+  }
+}

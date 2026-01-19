@@ -1,254 +1,68 @@
 {
-  "author": "Kaiban Board Contributors",
-  "categories": [
-    "Other"
+  "name": "kaibanboard-monorepo",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Kaiban Board - Kanban for AI-assisted development",
+  "workspaces": [
+    "packages/core",
+    "packages/cli",
+    "packages/vscode"
   ],
-  "contributes": {
-    "commands": [
-      {
-        "command": "kaiban.showBoard",
-        "icon": "$(kanban)",
-        "title": "Kaiban: Show Markdown Board"
-      },
-      {
-        "command": "kaiban.refreshBoard",
-        "icon": "$(refresh)",
-        "title": "Kaiban: Refresh Board"
-      },
-      {
-        "command": "kaiban.configure",
-        "icon": "$(settings-gear)",
-        "title": "Kaiban: Configure Board Settings"
-      },
-      {
-        "command": "kaiban.createPRD",
-        "icon": "$(file-text)",
-        "title": "Kaiban: Create PRD"
-      },
-      {
-        "command": "kaiban.createTask",
-        "icon": "$(tasklist)",
-        "title": "Kaiban: Create Task"
-      }
-    ],
-    "configuration": {
-      "properties": {
-        "kaiban.claude.additionalFlags": {
-          "default": "",
-          "description": "Additional flags to pass to Claude CLI (e.g., --dangerously-skip-permissions)",
-          "type": "string"
-        },
-        "kaiban.claude.executablePath": {
-          "default": "claude",
-          "description": "Path to Claude CLI executable",
-          "type": "string"
-        },
-        "kaiban.claude.executionTimeout": {
-          "default": 30,
-          "description": "Maximum time in minutes to wait for task execution to complete before cleaning up tracking resources.",
-          "maximum": 120,
-          "minimum": 5,
-          "type": "number"
-        },
-        "kaiban.claude.promptTemplate": {
-          "default": "Read the task file at {taskFile} and implement it. The task contains a link to the PRD with full requirements. Update the task status to Done when complete.",
-          "description": "Prompt template for Claude execution. Use {taskFile} for the task file path.",
-          "type": "string"
-        },
-        "kaiban.claude.useRalphLoop": {
-          "default": false,
-          "description": "Use /ralph-loop plugin if available. When false, runs Claude directly with the task.",
-          "type": "boolean"
-        },
-        "kaiban.cli.defaultProvider": {
-          "default": "auto",
-          "description": "Default CLI provider for task execution. Use 'auto' to automatically select the first available CLI.",
-          "enum": [
-            "auto",
-            "claude",
-            "codex",
-            "cursor"
-          ],
-          "enumDescriptions": [
-            "Automatically select the first available CLI (Claude > Codex > Cursor)",
-            "Use Claude CLI (claude command)",
-            "Use Codex CLI (codex command)",
-            "Use Cursor CLI (cursor command)"
-          ],
-          "type": "string"
-        },
-        "kaiban.codex.additionalFlags": {
-          "default": "",
-          "description": "Additional flags to pass to Codex CLI",
-          "type": "string"
-        },
-        "kaiban.codex.executablePath": {
-          "default": "codex",
-          "description": "Path to Codex CLI executable",
-          "type": "string"
-        },
-        "kaiban.codex.promptTemplate": {
-          "default": "Read the task file at {taskFile} and implement it. The task contains a link to the PRD with full requirements. Update the task status to Done when complete.",
-          "description": "Prompt template for Codex execution. Use {taskFile} for the task file path.",
-          "type": "string"
-        },
-        "kaiban.columns.enabled": {
-          "default": [
-            "To Do",
-            "Doing",
-            "Testing",
-            "Done"
-          ],
-          "description": "List of column names to display on the Kanban board. Valid values: 'Backlog', 'To Do', 'Doing', 'Testing', 'Done', 'Blocked'.",
-          "items": {
-            "enum": [
-              "Backlog",
-              "To Do",
-              "Doing",
-              "Testing",
-              "Done",
-              "Blocked"
-            ],
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "kaiban.cursor.additionalFlags": {
-          "default": "",
-          "description": "Additional flags to pass to Cursor CLI",
-          "type": "string"
-        },
-        "kaiban.cursor.executablePath": {
-          "default": "cursor",
-          "description": "Path to Cursor CLI executable",
-          "type": "string"
-        },
-        "kaiban.cursor.promptTemplate": {
-          "default": "Read the task file at {taskFile} and implement it. The task contains a link to the PRD with full requirements. Update the task status to Done when complete.",
-          "description": "Prompt template for Cursor execution. Use {taskFile} for the task file path.",
-          "type": "string"
-        },
-        "kaiban.prd.basePath": {
-          "default": ".agent/PRDS",
-          "description": "Base path for PRD (Product Requirements Document) files. PRD paths in task files will be resolved relative to this path.",
-          "type": "string"
-        },
-        "kaiban.ralph.command": {
-          "default": "/ralph-loop:ralph-loop",
-          "description": "Ralph command to execute. Can be a Claude Code plugin command (e.g., /ralph-loop:ralph-loop) or a bash script path (e.g., bash /path/to/ralph-loop.sh)",
-          "type": "string"
-        },
-        "kaiban.ralph.completionPromise": {
-          "default": "",
-          "description": "Completion promise template for ralph-loop. If empty, will use task description as completion signal.",
-          "type": "string"
-        },
-        "kaiban.ralph.maxIterations": {
-          "default": 5,
-          "description": "Maximum iterations for ralph-loop command",
-          "type": "number"
-        },
-        "kaiban.skills.useAgentFolderInit": {
-          "default": false,
-          "description": "Use agent-folder-init Claude plugin to scaffold .agent/ folder (requires plugin installed via Claude CLI)",
-          "type": "boolean"
-        },
-        "kaiban.skills.useSessionDocumenter": {
-          "default": false,
-          "description": "Prompt to document session after task completion using session-documenter Claude plugin",
-          "type": "boolean"
-        },
-        "kaiban.skills.useTaskPrdCreator": {
-          "default": false,
-          "description": "Use task-prd-creator Claude plugin when creating tasks (requires plugin installed via Claude CLI)",
-          "type": "boolean"
-        },
-        "kaiban.task.basePath": {
-          "default": ".agent/TASKS",
-          "description": "Base path for task files. Tasks will be created in and scanned from this directory.",
-          "type": "string"
-        }
-      },
-      "title": "Kaiban Board"
-    },
-    "viewsContainers": {
-      "activitybar": [
-        {
-          "icon": "$(checklist)",
-          "id": "kaibanboard",
-          "title": "Kaiban Board"
-        }
-      ]
-    }
+  "scripts": {
+    "build": "bun run build:core && bun run build:cli && bun run build:vscode",
+    "build:core": "cd packages/core && bun run build",
+    "build:cli": "cd packages/cli && bun run build",
+    "build:vscode": "cd packages/vscode && bun run compile",
+    "clean": "bun run clean:core && bun run clean:cli && bun run clean:vscode",
+    "clean:core": "rm -rf packages/core/dist",
+    "clean:cli": "rm -rf packages/cli/dist",
+    "clean:vscode": "rm -rf packages/vscode/out",
+    "check": "biome check packages/",
+    "check:fix": "biome check --write packages/",
+    "format": "biome format --write packages/",
+    "format:check": "biome format packages/",
+    "lint": "biome lint packages/",
+    "lint:fix": "biome lint --write packages/",
+    "lint-staged": "lint-staged",
+    "prepare": "husky",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:ui": "vitest --ui",
+    "test:watch": "vitest",
+    "package:cli": "cd packages/cli && bun run build",
+    "package:vscode": "cd packages/vscode && bun run package"
   },
-  "dependencies": {
-    "lucide": "0.562.0"
-  },
-  "description": "Kanban board for Claude CLI task management. Execute markdown tasks via Claude Code directly from your board.",
   "devDependencies": {
     "@biomejs/biome": "2.3.11",
-    "@types/node": "25.0.8",
-    "@types/vscode": "1.105.0",
+    "@types/node": "22.15.29",
     "@vitest/coverage-v8": "4.0.17",
     "@vitest/ui": "4.0.17",
-    "@vscode/vsce": "3.7.1",
     "husky": "9.1.7",
     "lint-staged": "16.2.7",
-    "playwright": "1.57.0",
+    "sass": "^1.97.2",
     "typescript": "5.9.3",
     "vitest": "4.0.17"
   },
-  "displayName": "Kaiban Board",
-  "engines": {
-    "vscode": "^1.105.0"
+  "lint-staged": {
+    "packages/**/*.ts": [
+      "biome check --write --no-errors-on-unmatched"
+    ],
+    "packages/**/*.tsx": [
+      "biome check --write --no-errors-on-unmatched"
+    ]
   },
-  "icon": "assets/icon.png",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/shipshitdev/kaibanboard.com"
+  },
+  "author": "Kaiban Board Contributors",
   "keywords": [
     "kanban",
     "markdown",
     "task-management",
     "ai",
     "productivity",
-    "agent",
-    "vscode-extension"
-  ],
-  "license": "MIT",
-  "lint-staged": {
-    "src/**/*.ts": [
-      "biome check --write --no-errors-on-unmatched"
-    ]
-  },
-  "main": "./out/extension.js",
-  "name": "kaibanboardcom",
-  "publisher": "shipshitdev",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/shipshitdev/kaibanboard.com"
-  },
-  "scripts": {
-    "check": "biome check src/",
-    "check:fix": "biome check --write src/",
-    "compile": "tsc -p ./",
-    "format": "biome format --write src/",
-    "format:check": "biome format src/",
-    "lint": "biome lint src/",
-    "lint-staged": "lint-staged",
-    "lint:fix": "biome lint --write src/",
-    "package": "bun run compile && mkdir -p build && vsce package --no-dependencies --out build/",
-    "pre:install": "bun update --latest --recursive && bun add -D @types/vscode@1.105.0",
-    "prepare": "husky",
-    "pretest": "bun run compile",
-    "screenshot": "bun run scripts/generate-screenshot.ts",
-    "social-preview": "bun run scripts/generate-social-preview.ts",
-    "test": "vitest run",
-    "test:coverage": "vitest run --coverage",
-    "test:ui": "vitest --ui",
-    "test:watch": "vitest",
-    "version:major": "bunx npm version major --no-git-tag-version",
-    "version:minor": "bunx npm version minor --no-git-tag-version",
-    "version:patch": "bunx npm version patch --no-git-tag-version",
-    "vscode:prepublish": "bun run compile",
-    "watch": "tsc -watch -p ./"
-  },
-  "version": "0.3.1"
+    "agent"
+  ]
 }
