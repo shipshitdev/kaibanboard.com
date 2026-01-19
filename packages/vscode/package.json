@@ -1,33 +1,8 @@
 {
-  "name": "kaibanboardcom",
-  "displayName": "Kaiban Board",
-  "version": "0.3.1",
-  "description": "Kanban board for Claude CLI task management. Execute markdown tasks via Claude Code directly from your board.",
-  "publisher": "shipshitdev",
   "author": "Kaiban Board Contributors",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/shipshitdev/kaibanboard.com",
-    "directory": "packages/vscode"
-  },
-  "icon": "assets/icon.png",
-  "engines": {
-    "vscode": "^1.105.0"
-  },
   "categories": [
     "Other"
   ],
-  "keywords": [
-    "kanban",
-    "markdown",
-    "task-management",
-    "ai",
-    "productivity",
-    "agent",
-    "vscode-extension"
-  ],
-  "main": "./out/extension.js",
   "contributes": {
     "commands": [
       {
@@ -67,37 +42,37 @@
       }
     ],
     "configuration": {
-      "title": "Kaiban Board",
       "properties": {
-        "kaiban.claude.executablePath": {
-          "type": "string",
-          "default": "claude",
-          "description": "Path to Claude CLI executable"
-        },
         "kaiban.claude.additionalFlags": {
-          "type": "string",
           "default": "",
-          "description": "Additional flags to pass to Claude CLI (e.g., --dangerously-skip-permissions)"
+          "description": "Additional flags to pass to Claude CLI (e.g., --dangerously-skip-permissions)",
+          "type": "string"
         },
-        "kaiban.claude.promptTemplate": {
-          "type": "string",
-          "default": "Read the task file at {taskFile} and implement it. The task contains a link to the PRD with full requirements. Update the task status to Done when complete.",
-          "description": "Prompt template for Claude execution. Use {taskFile} for the task file path."
-        },
-        "kaiban.claude.useRalphLoop": {
-          "type": "boolean",
-          "default": false,
-          "description": "Use /ralph-loop plugin if available. When false, runs Claude directly with the task."
+        "kaiban.claude.executablePath": {
+          "default": "claude",
+          "description": "Path to Claude CLI executable",
+          "type": "string"
         },
         "kaiban.claude.executionTimeout": {
-          "type": "number",
           "default": 30,
-          "minimum": 5,
+          "description": "Maximum time in minutes to wait for task execution to complete before cleaning up tracking resources.",
           "maximum": 120,
-          "description": "Maximum time in minutes to wait for task execution to complete before cleaning up tracking resources."
+          "minimum": 5,
+          "type": "number"
+        },
+        "kaiban.claude.promptTemplate": {
+          "default": "Read the task file at {taskFile} and implement it. The task contains a link to the PRD with full requirements. Update the task status to Done when complete.",
+          "description": "Prompt template for Claude execution. Use {taskFile} for the task file path.",
+          "type": "string"
+        },
+        "kaiban.claude.useRalphLoop": {
+          "default": false,
+          "description": "Use /ralph-loop plugin if available. When false, runs Claude directly with the task.",
+          "type": "boolean"
         },
         "kaiban.cli.defaultProvider": {
-          "type": "string",
+          "default": "auto",
+          "description": "Default CLI provider for task execution. Use 'auto' to automatically select the first available CLI.",
           "enum": [
             "auto",
             "claude",
@@ -110,43 +85,43 @@
             "Use Codex CLI (codex command)",
             "Use Cursor CLI (cursor command)"
           ],
-          "default": "auto",
-          "description": "Default CLI provider for task execution. Use 'auto' to automatically select the first available CLI."
-        },
-        "kaiban.codex.executablePath": {
-          "type": "string",
-          "default": "codex",
-          "description": "Path to Codex CLI executable"
+          "type": "string"
         },
         "kaiban.codex.additionalFlags": {
-          "type": "string",
           "default": "",
-          "description": "Additional flags to pass to Codex CLI"
+          "description": "Additional flags to pass to Codex CLI",
+          "type": "string"
+        },
+        "kaiban.codex.executablePath": {
+          "default": "codex",
+          "description": "Path to Codex CLI executable",
+          "type": "string"
         },
         "kaiban.codex.promptTemplate": {
-          "type": "string",
           "default": "Read the task file at {taskFile} and implement it. The task contains a link to the PRD with full requirements. Update the task status to Done when complete.",
-          "description": "Prompt template for Codex execution. Use {taskFile} for the task file path."
+          "description": "Prompt template for Codex execution. Use {taskFile} for the task file path.",
+          "type": "string"
         },
-        "kaiban.cursor.executablePath": {
-          "type": "string",
-          "default": "cursor",
-          "description": "Path to Cursor CLI executable"
-        },
-        "kaiban.cursor.additionalFlags": {
-          "type": "string",
-          "default": "",
-          "description": "Additional flags to pass to Cursor CLI"
-        },
-        "kaiban.cursor.promptTemplate": {
-          "type": "string",
-          "default": "Read the task file at {taskFile} and implement it. The task contains a link to the PRD with full requirements. Update the task status to Done when complete.",
-          "description": "Prompt template for Cursor execution. Use {taskFile} for the task file path."
+        "kaiban.columns.agents": {
+          "default": {
+            "AI Review": "Codex",
+            "In Progress": "Claude Code",
+            "Planning": "Claude Code"
+          },
+          "description": "Default agent assignment per column. Valid agent values: 'Claude Code', 'Codex', 'None'.",
+          "type": "object"
         },
         "kaiban.columns.enabled": {
-          "type": "array",
+          "default": [
+            "Backlog",
+            "Planning",
+            "In Progress",
+            "AI Review",
+            "Human Review",
+            "Done"
+          ],
+          "description": "List of column names to display on the Kanban board. Valid values: 'Backlog', 'Planning', 'In Progress', 'AI Review', 'Human Review', 'Done', 'Archived', 'Blocked'.",
           "items": {
-            "type": "string",
             "enum": [
               "Backlog",
               "Planning",
@@ -156,170 +131,160 @@
               "Done",
               "Archived",
               "Blocked"
-            ]
+            ],
+            "type": "string"
           },
-          "default": [
-            "Backlog",
-            "Planning",
-            "In Progress",
-            "AI Review",
-            "Human Review",
-            "Done"
-          ],
-          "description": "List of column names to display on the Kanban board. Valid values: 'Backlog', 'Planning', 'In Progress', 'AI Review', 'Human Review', 'Done', 'Archived', 'Blocked'."
+          "type": "array"
         },
-        "kaiban.columns.agents": {
-          "type": "object",
-          "default": {
-            "Planning": "Claude Code",
-            "In Progress": "Claude Code",
-            "AI Review": "Codex"
-          },
-          "description": "Default agent assignment per column. Valid agent values: 'Claude Code', 'Codex', 'None'."
-        },
-        "kaiban.prd.basePath": {
-          "type": "string",
-          "default": ".agent/PRDS",
-          "description": "Base path for PRD (Product Requirements Document) files. PRD paths in task files will be resolved relative to this path."
-        },
-        "kaiban.task.basePath": {
-          "type": "string",
-          "default": ".agent/TASKS",
-          "description": "Base path for task files. Tasks will be created in and scanned from this directory."
-        },
-        "kaiban.ralph.command": {
-          "type": "string",
-          "default": "/ralph-loop:ralph-loop",
-          "description": "Ralph command to execute. Can be a Claude Code plugin command (e.g., /ralph-loop:ralph-loop) or a bash script path (e.g., bash /path/to/ralph-loop.sh)"
-        },
-        "kaiban.ralph.maxIterations": {
-          "type": "number",
-          "default": 5,
-          "description": "Maximum iterations for ralph-loop command"
-        },
-        "kaiban.ralph.completionPromise": {
-          "type": "string",
+        "kaiban.cursor.additionalFlags": {
           "default": "",
-          "description": "Completion promise template for ralph-loop. If empty, will use task description as completion signal."
+          "description": "Additional flags to pass to Cursor CLI",
+          "type": "string"
         },
-        "kaiban.skills.useAgentFolderInit": {
-          "type": "boolean",
-          "default": false,
-          "description": "Use agent-folder-init Claude plugin to scaffold .agent/ folder (requires plugin installed via Claude CLI)"
+        "kaiban.cursor.executablePath": {
+          "default": "cursor",
+          "description": "Path to Cursor CLI executable",
+          "type": "string"
         },
-        "kaiban.skills.useTaskPrdCreator": {
-          "type": "boolean",
-          "default": false,
-          "description": "Use task-prd-creator Claude plugin when creating tasks (requires plugin installed via Claude CLI)"
-        },
-        "kaiban.skills.useSessionDocumenter": {
-          "type": "boolean",
-          "default": false,
-          "description": "Prompt to document session after task completion using session-documenter Claude plugin"
-        },
-        "kaiban.worktree.enabled": {
-          "type": "boolean",
-          "default": false,
-          "description": "Enable git worktree isolation for tasks. Each task runs in its own branch/worktree."
-        },
-        "kaiban.worktree.basePath": {
-          "type": "string",
-          "default": ".worktrees",
-          "description": "Base path for worktree directories (relative to workspace root)."
-        },
-        "kaiban.worktree.branchPrefix": {
-          "type": "string",
-          "default": "task/",
-          "description": "Prefix for worktree branch names."
-        },
-        "kaiban.worktree.defaultBaseBranch": {
-          "type": "string",
-          "default": "main",
-          "description": "Default base branch for new worktrees."
-        },
-        "kaiban.worktree.autoCleanup": {
-          "type": "boolean",
-          "default": true,
-          "description": "Automatically cleanup worktrees after merge."
+        "kaiban.cursor.promptTemplate": {
+          "default": "Read the task file at {taskFile} and implement it. The task contains a link to the PRD with full requirements. Update the task status to Done when complete.",
+          "description": "Prompt template for Cursor execution. Use {taskFile} for the task file path.",
+          "type": "string"
         },
         "kaiban.github.autoCloseIssue": {
-          "type": "boolean",
           "default": false,
-          "description": "Automatically close linked GitHub issue when task is marked Done."
-        },
-        "kaiban.review.preferCodex": {
-          "type": "boolean",
-          "default": true,
-          "description": "Prefer Codex CLI for code reviews (falls back to Claude if unavailable)."
-        },
-        "kaiban.merge.useAIAssist": {
-          "type": "boolean",
-          "default": true,
-          "description": "Use AI assistance for merge conflict resolution."
+          "description": "Automatically close linked GitHub issue when task is marked Done.",
+          "type": "boolean"
         },
         "kaiban.merge.preferredProvider": {
-          "type": "string",
+          "default": "auto",
+          "description": "Preferred AI provider for merge conflict resolution.",
           "enum": [
             "auto",
             "claude",
             "codex"
           ],
-          "default": "auto",
-          "description": "Preferred AI provider for merge conflict resolution."
+          "type": "string"
         },
-        "kaiban.pipeline.enabled": {
-          "type": "boolean",
+        "kaiban.merge.useAIAssist": {
           "default": true,
-          "description": "Enable automatic pipeline orchestration (Claude → Codex Review → Claude with Ralph Loop)."
+          "description": "Use AI assistance for merge conflict resolution.",
+          "type": "boolean"
         },
         "kaiban.pipeline.autoReviewOnAIReview": {
-          "type": "boolean",
           "default": true,
-          "description": "Auto-trigger Codex review when task moves to AI Review status."
+          "description": "Auto-trigger Codex review when task moves to AI Review status.",
+          "type": "boolean"
+        },
+        "kaiban.pipeline.enabled": {
+          "default": true,
+          "description": "Enable automatic pipeline orchestration (Claude → Codex Review → Claude with Ralph Loop).",
+          "type": "boolean"
+        },
+        "kaiban.pipeline.maxRetryIterations": {
+          "default": 2,
+          "description": "Maximum times to retry after failed review before moving to Human Review.",
+          "maximum": 5,
+          "minimum": 1,
+          "type": "number"
         },
         "kaiban.pipeline.onReviewFail": {
-          "type": "string",
+          "default": "auto-retry",
+          "description": "Action when review fails: auto-retry with Claude or stop at Human Review.",
           "enum": [
             "auto-retry",
             "human-review"
           ],
-          "default": "auto-retry",
-          "description": "Action when review fails: auto-retry with Claude or stop at Human Review."
+          "type": "string"
         },
-        "kaiban.pipeline.maxRetryIterations": {
-          "type": "number",
-          "default": 2,
-          "minimum": 1,
-          "maximum": 5,
-          "description": "Maximum times to retry after failed review before moving to Human Review."
+        "kaiban.prd.basePath": {
+          "default": ".agent/PRDS",
+          "description": "Base path for PRD (Product Requirements Document) files. PRD paths in task files will be resolved relative to this path.",
+          "type": "string"
+        },
+        "kaiban.ralph.command": {
+          "default": "/ralph-loop:ralph-loop",
+          "description": "Ralph command to execute. Can be a Claude Code plugin command (e.g., /ralph-loop:ralph-loop) or a bash script path (e.g., bash /path/to/ralph-loop.sh)",
+          "type": "string"
+        },
+        "kaiban.ralph.completionPromise": {
+          "default": "",
+          "description": "Completion promise template for ralph-loop. If empty, will use task description as completion signal.",
+          "type": "string"
+        },
+        "kaiban.ralph.maxIterations": {
+          "default": 5,
+          "description": "Maximum iterations for ralph-loop command",
+          "type": "number"
+        },
+        "kaiban.review.preferCodex": {
+          "default": true,
+          "description": "Prefer Codex CLI for code reviews (falls back to Claude if unavailable).",
+          "type": "boolean"
+        },
+        "kaiban.skills.useAgentFolderInit": {
+          "default": false,
+          "description": "Use agent-folder-init Claude plugin to scaffold .agent/ folder (requires plugin installed via Claude CLI)",
+          "type": "boolean"
+        },
+        "kaiban.skills.useSessionDocumenter": {
+          "default": false,
+          "description": "Prompt to document session after task completion using session-documenter Claude plugin",
+          "type": "boolean"
+        },
+        "kaiban.skills.useTaskPrdCreator": {
+          "default": false,
+          "description": "Use task-prd-creator Claude plugin when creating tasks (requires plugin installed via Claude CLI)",
+          "type": "boolean"
+        },
+        "kaiban.task.basePath": {
+          "default": ".agent/TASKS",
+          "description": "Base path for task files. Tasks will be created in and scanned from this directory.",
+          "type": "string"
+        },
+        "kaiban.worktree.autoCleanup": {
+          "default": true,
+          "description": "Automatically cleanup worktrees after merge.",
+          "type": "boolean"
+        },
+        "kaiban.worktree.basePath": {
+          "default": ".worktrees",
+          "description": "Base path for worktree directories (relative to workspace root).",
+          "type": "string"
+        },
+        "kaiban.worktree.branchPrefix": {
+          "default": "task/",
+          "description": "Prefix for worktree branch names.",
+          "type": "string"
+        },
+        "kaiban.worktree.defaultBaseBranch": {
+          "default": "main",
+          "description": "Default base branch for new worktrees.",
+          "type": "string"
+        },
+        "kaiban.worktree.enabled": {
+          "default": false,
+          "description": "Enable git worktree isolation for tasks. Each task runs in its own branch/worktree.",
+          "type": "boolean"
         }
-      }
+      },
+      "title": "Kaiban Board"
     },
     "viewsContainers": {
       "activitybar": [
         {
+          "icon": "$(checklist)",
           "id": "kaibanboard",
-          "title": "Kaiban Board",
-          "icon": "$(checklist)"
+          "title": "Kaiban Board"
         }
       ]
     }
-  },
-  "scripts": {
-    "scss:build": "sass media/styles.scss media/styles.css",
-    "scss:watch": "sass --watch media/styles.scss:media/styles.css",
-    "compile": "bun run scss:build && tsc -p ./",
-    "watch": "tsc -watch -p ./",
-    "pretest": "bun run compile",
-    "test": "vitest run",
-    "test:coverage": "vitest run --coverage",
-    "package": "bun run compile && mkdir -p build && vsce package --no-dependencies --out build/",
-    "vscode:prepublish": "bun run compile"
   },
   "dependencies": {
     "@kaibanboard/core": "workspace:*",
     "lucide": "0.562.0"
   },
+  "description": "Kanban board for Claude CLI task management. Execute markdown tasks via Claude Code directly from your board.",
   "devDependencies": {
     "@biomejs/biome": "2.3.11",
     "@types/node": "22.15.29",
@@ -332,5 +297,40 @@
     "playwright": "1.57.0",
     "typescript": "5.9.3",
     "vitest": "4.0.17"
-  }
+  },
+  "displayName": "Kaiban Board",
+  "engines": {
+    "vscode": "^1.105.0"
+  },
+  "icon": "assets/icon.png",
+  "keywords": [
+    "kanban",
+    "markdown",
+    "task-management",
+    "ai",
+    "productivity",
+    "agent",
+    "vscode-extension"
+  ],
+  "license": "MIT",
+  "main": "./out/extension.js",
+  "name": "kaibanboardcom",
+  "publisher": "shipshitdev",
+  "repository": {
+    "directory": "packages/vscode",
+    "type": "git",
+    "url": "https://github.com/shipshitdev/kaibanboard.com"
+  },
+  "scripts": {
+    "compile": "bun run scss:build && tsc -p ./",
+    "package": "bun run compile && mkdir -p build && vsce package --no-dependencies --out build/",
+    "pretest": "bun run compile",
+    "scss:build": "sass media/styles.scss media/styles.css",
+    "scss:watch": "sass --watch media/styles.scss:media/styles.css",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "vscode:prepublish": "bun run compile",
+    "watch": "tsc -watch -p ./"
+  },
+  "version": "0.4.0"
 }

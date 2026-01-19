@@ -1,37 +1,6 @@
 {
-  "name": "kaibanboard-monorepo",
-  "version": "0.0.0",
-  "private": true,
+  "author": "Kaiban Board Contributors",
   "description": "Kaiban Board - Kanban for AI-assisted development",
-  "workspaces": [
-    "packages/core",
-    "packages/cli",
-    "packages/vscode"
-  ],
-  "scripts": {
-    "build": "bun run build:core && bun run build:cli && bun run build:vscode",
-    "build:core": "cd packages/core && bun run build",
-    "build:cli": "cd packages/cli && bun run build",
-    "build:vscode": "cd packages/vscode && bun run compile",
-    "clean": "bun run clean:core && bun run clean:cli && bun run clean:vscode",
-    "clean:core": "rm -rf packages/core/dist",
-    "clean:cli": "rm -rf packages/cli/dist",
-    "clean:vscode": "rm -rf packages/vscode/out",
-    "check": "biome check packages/",
-    "check:fix": "biome check --write packages/",
-    "format": "biome format --write packages/",
-    "format:check": "biome format packages/",
-    "lint": "biome lint packages/",
-    "lint:fix": "biome lint --write packages/",
-    "lint-staged": "lint-staged",
-    "prepare": "husky",
-    "test": "vitest run",
-    "test:coverage": "vitest run --coverage",
-    "test:ui": "vitest --ui",
-    "test:watch": "vitest",
-    "package:cli": "cd packages/cli && bun run build",
-    "package:vscode": "cd packages/vscode && bun run package"
-  },
   "devDependencies": {
     "@biomejs/biome": "2.3.11",
     "@types/node": "22.15.29",
@@ -43,6 +12,15 @@
     "typescript": "5.9.3",
     "vitest": "4.0.17"
   },
+  "keywords": [
+    "kanban",
+    "markdown",
+    "task-management",
+    "ai",
+    "productivity",
+    "agent"
+  ],
+  "license": "MIT",
   "lint-staged": {
     "packages/**/*.ts": [
       "biome check --write --no-errors-on-unmatched"
@@ -51,18 +29,41 @@
       "biome check --write --no-errors-on-unmatched"
     ]
   },
-  "license": "MIT",
+  "name": "kaibanboard-monorepo",
+  "private": true,
   "repository": {
     "type": "git",
     "url": "https://github.com/shipshitdev/kaibanboard.com"
   },
-  "author": "Kaiban Board Contributors",
-  "keywords": [
-    "kanban",
-    "markdown",
-    "task-management",
-    "ai",
-    "productivity",
-    "agent"
+  "scripts": {
+    "pre:install": "cd packages/core && bun update && cd ../cli && bun update && cd ../vscode && bun update",
+    "build": "bun run build:core && bun run build:cli && bun run build:vscode",
+    "build:cli": "cd packages/cli && bun run build",
+    "build:core": "cd packages/core && bun run build",
+    "build:vscode": "cd packages/vscode && bun run compile",
+    "check": "biome check packages/",
+    "check:fix": "biome check --write packages/",
+    "clean": "bun run clean:core && bun run clean:cli && bun run clean:vscode",
+    "clean:cli": "rm -rf packages/cli/dist",
+    "clean:core": "rm -rf packages/core/dist",
+    "clean:vscode": "rm -rf packages/vscode/out",
+    "format": "biome format --write packages/",
+    "format:check": "biome format packages/",
+    "lint": "biome lint packages/",
+    "lint-staged": "lint-staged",
+    "lint:fix": "biome lint --write packages/",
+    "package:cli": "cd packages/cli && bun run build",
+    "package:vscode": "cd packages/vscode && bun run package",
+    "prepare": "husky",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:ui": "vitest --ui",
+    "test:watch": "vitest"
+  },
+  "version": "0.4.0",
+  "workspaces": [
+    "packages/core",
+    "packages/cli",
+    "packages/vscode"
   ]
 }
