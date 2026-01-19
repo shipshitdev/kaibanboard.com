@@ -7,6 +7,7 @@ import { CodexReviewService } from "./services/codexReviewService";
 import { GitHubService } from "./services/githubService";
 import { GitService } from "./services/gitService";
 import { GitWorktreeService } from "./services/gitWorktreeService";
+import { PRDInterviewService } from "./services/prdInterviewService";
 import { SkillService } from "./services/skillService";
 import { TranscriptMonitorService } from "./services/transcriptMonitorService";
 import { type Task, TaskParser } from "./taskParser";
@@ -25,6 +26,7 @@ export class KanbanViewProvider {
   private panel: vscode.WebviewPanel | undefined;
   private taskParser: TaskParser;
   private skillService: SkillService;
+  private prdInterviewService: PRDInterviewService;
   private quotaService: ClaudeCodeQuotaService;
   private cliDetectionService: CLIDetectionService;
   private transcriptMonitorService: TranscriptMonitorService;
@@ -58,6 +60,7 @@ export class KanbanViewProvider {
   constructor(private context: vscode.ExtensionContext) {
     this.taskParser = new TaskParser();
     this.skillService = new SkillService();
+    this.prdInterviewService = new PRDInterviewService();
     this.quotaService = new ClaudeCodeQuotaService();
     this.cliDetectionService = new CLIDetectionService();
     this.transcriptMonitorService = new TranscriptMonitorService();
@@ -1031,58 +1034,53 @@ Please address all the review findings above while implementing the task.`;
     if (!this.panel) return;
 
     try {
-      const workspaceFolders = vscode.workspace.workspaceFolders;
-      if (!workspaceFolders) {
-        vscode.window.showErrorMessage("No workspace folder open");
-        return;
-      }
-
-      // Get PRD base path from configuration
-      const config = vscode.workspace.getConfiguration("kaiban.prd");
-      const basePath = config.get<string>("basePath", ".agent/PRDS");
-
       // Get task info
-      const tasks = await this.taskParser.parseTasks();
+      const tasks = this.taskParser.parseTasks();
       const task = tasks.find((t) => t.id === taskId);
       if (!task) {
         vscode.window.showErrorMessage("Task not found");
         return;
       }
 
-      // Generate PRD filename from task label
-      const slug = task.label
-        .toLowerCase()
-        .trim()
-        .replace(/[^\w\s-]/g, "")
-        .replace(/[\s_-]+/g, "-")
-        .replace(/^-+|-+$/g, "");
-      const prdFileName = `${slug}.md`;
+      // Ask user for PRD name, pre-filled with task label
+      const prdName = await vscode.window.showInputBox({
+        prompt: "Enter the PRD name or topic",
+        value: task.label,
+        placeHolder: "e.g., User Authentication System",
+        validateInput: (value) => {
+          if (!value || value.trim().length === 0) {
+            return "PRD name cannot be empty";
+          }
+          return null;
+        },
+      });
 
-      // Create PRD directory if needed
-      const prdDir = vscode.Uri.joinPath(workspaceFolders[0].uri, basePath);
-      try {
-        await vscode.workspace.fs.createDirectory(prdDir);
-      } catch (_e) {
-        // Directory may already exist
+      if (!prdName) {
+        return; // User cancelled
       }
 
-      // Create PRD file with template
-      const prdUri = vscode.Uri.joinPath(prdDir, prdFileName);
-      const prdTemplate = this.generatePRDTemplate(task.label, task.description || "");
-      await vscode.workspace.fs.writeFile(prdUri, Buffer.from(prdTemplate, "utf8"));
+      // Start the interview process with task context
+      const result = await this.prdInterviewService.startInterview({
+        name: prdName.trim(),
+        taskContext: {
+          taskId: task.id,
+          label: task.label,
+          description: task.description,
+        },
+      });
 
-      // Update task file to link to PRD
-      const relativePrdPath = `../${basePath}/${prdFileName}`;
-      await this.taskParser.updateTaskPRD(taskId, relativePrdPath);
+      if (result) {
+        // Get PRD base path from configuration
+        const config = vscode.workspace.getConfiguration("kaiban.prd");
+        const basePath = config.get<string>("basePath", ".agent/PRDS");
 
-      // Open PRD for editing
-      const document = await vscode.workspace.openTextDocument(prdUri);
-      await vscode.window.showTextDocument(document);
+        // Update task file to link to PRD
+        const relativePrdPath = `../${basePath}/${result.slug}.md`;
+        await this.taskParser.updateTaskPRD(taskId, relativePrdPath);
 
-      vscode.window.showInformationMessage(`PRD created: ${prdFileName}`);
-
-      // Refresh to show updated PRD link
-      await this.refresh();
+        // Refresh to show updated PRD link
+        await this.refresh();
+      }
     } catch (error) {
       vscode.window.showErrorMessage(`Failed to create PRD: ${error}`);
     }
@@ -1221,61 +1219,6 @@ Please address all the review findings above while implementing the task.`;
 
     const baseUri = vscode.Uri.joinPath(workspaceFolders[0].uri, basePath);
     return vscode.Uri.joinPath(baseUri, relativePrdPath);
-  }
-
-  private generatePRDTemplate(title: string, description: string): string {
-    const now = new Date().toISOString().split("T")[0];
-    return `# PRD: ${title}
-
-**Created:** ${now}
-**Status:** Draft
-
----
-
-## Overview
-
-${description || "Brief description of the feature/task."}
-
-## Goals
-
-- Goal 1
-- Goal 2
-
-## Requirements
-
-### Functional Requirements
-
-1. Requirement 1
-2. Requirement 2
-
-### Non-Functional Requirements
-
-- Performance considerations
-- Security considerations
-
-## User Stories
-
-As a [user type], I want [feature] so that [benefit].
-
-## Acceptance Criteria
-
-- [ ] Criterion 1
-- [ ] Criterion 2
-
-## Out of Scope
-
-- Items not included in this scope
-
-## Technical Notes
-
-Implementation details and considerations.
-
----
-
-## Changelog
-
-- ${now}: Initial draft
-`;
   }
 
   private async updateTaskStatus(taskId: string, newStatus: string) {

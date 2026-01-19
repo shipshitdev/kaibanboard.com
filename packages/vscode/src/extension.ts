@@ -3,6 +3,7 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import { KanbanViewProvider } from "./kanbanView";
 import { ChangelogService } from "./services/changelogService";
+import { PRDInterviewService } from "./services/prdInterviewService";
 import { SkillService } from "./services/skillService";
 import { TaskParser } from "./taskParser";
 import type { ChangelogFormat } from "./types/changelog";
@@ -54,61 +55,30 @@ export function activate(context: vscode.ExtensionContext) {
     }
   });
 
-  // Register command to create PRD via Claude CLI
+  // Register command to create PRD via Claude CLI interview
+  const prdInterviewService = new PRDInterviewService();
   const createPRDCommand = vscode.commands.registerCommand("kaiban.createPRD", async () => {
     try {
-      const workspaceFolder = getWorkspaceFolder();
-      if (!workspaceFolder) {
-        vscode.window.showErrorMessage("No workspace folder open");
-        return;
-      }
-
-      // Get Claude CLI configuration
-      const config = vscode.workspace.getConfiguration("kaiban");
-      const claudePath = config.get<string>("claude.executablePath", "claude");
-      const additionalFlags = config.get<string>("claude.additionalFlags", "");
-      const prdBasePath = getPRDBasePath(workspaceFolder);
-
-      // Build the prompt for Claude to interactively create a PRD
-      const prompt = `Help me create a Product Requirements Document (PRD).
-
-Ask me the following questions one at a time:
-1. What is the feature or product name?
-2. What problem does it solve? (Overview)
-3. What are the main goals? (2-3 bullet points)
-4. What are the key requirements? (numbered list)
-5. What are the acceptance criteria? (checklist format)
-6. Any technical notes or constraints?
-
-After gathering all information, create a PRD file at ${prdBasePath}/<slug-based-on-title>.md with this structure:
-- # <Title> - Product Requirements Document
-- ## Overview
-- ## Goals
-- ## Requirements
-- ## Acceptance Criteria
-- ## Technical Notes
-
-Important: Create the directory if it doesn't exist. Use a kebab-case filename based on the title.`;
-
-      // Build command
-      const flags = additionalFlags ? `${additionalFlags} ` : "";
-      const fullCommand = `${claudePath} ${flags}"${prompt.replace(/"/g, '\\"')}"`;
-
-      // Get workspace path for terminal cwd
-      const cwd = workspaceFolder.uri.fsPath;
-
-      // Create terminal
-      const terminal = vscode.window.createTerminal({
-        name: "Claude: Create PRD",
-        cwd: cwd,
+      // Ask user for PRD name
+      const prdName = await vscode.window.showInputBox({
+        prompt: "Enter the PRD name or topic",
+        placeHolder: "e.g., User Authentication System",
+        validateInput: (value) => {
+          if (!value || value.trim().length === 0) {
+            return "PRD name cannot be empty";
+          }
+          return null;
+        },
       });
 
-      terminal.show();
-      terminal.sendText(fullCommand);
+      if (!prdName) {
+        return; // User cancelled
+      }
 
-      vscode.window.showInformationMessage(
-        "Claude CLI opened - follow the prompts to create your PRD"
-      );
+      // Start the interview process
+      await prdInterviewService.startInterview({
+        name: prdName.trim(),
+      });
     } catch (error) {
       vscode.window.showErrorMessage(`Failed to start PRD creation: ${error}`);
     }
