@@ -56,21 +56,21 @@ export const DEFAULT_CLI_CONFIGS: Record<CLIProviderName, Omit<CLIProviderConfig
   claude: {
     executablePath: "claude",
     promptTemplate:
-      "Read the task file at {taskFile} and implement it. The task contains a link to the PRD with full requirements. Update the task status to Done when complete.",
+      "Read the task file at {taskFile} and implement it. The task contains a link to the PRD with full requirements. Update the task status to AI Review when complete.",
     additionalFlags: "",
     supportsRalphLoop: true,
   },
   codex: {
     executablePath: "codex",
     promptTemplate:
-      "Read the task file at {taskFile} and implement it. The task contains a link to the PRD with full requirements. Update the task status to Done when complete.",
+      "Read the task file at {taskFile} and implement it. The task contains a link to the PRD with full requirements. Update the task status to AI Review when complete.",
     additionalFlags: "",
     supportsRalphLoop: false,
   },
   cursor: {
     executablePath: "cursor",
     promptTemplate:
-      "Read the task file at {taskFile} and implement it. The task contains a link to the PRD with full requirements. Update the task status to Done when complete.",
+      "Read the task file at {taskFile} and implement it. The task contains a link to the PRD with full requirements. Update the task status to AI Review when complete.",
     additionalFlags: "",
     supportsRalphLoop: false,
   },

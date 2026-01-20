@@ -1,7 +1,7 @@
 {
   "tasks": [
     {
-      "command": "bun run compile",
+      "command": "bun run build:vscode",
       "group": "build",
       "label": "bun: compile",
       "presentation": {
@@ -11,7 +11,7 @@
       "type": "shell"
     },
     {
-      "command": "bun run watch",
+      "command": "cd packages/vscode && bun run watch",
       "group": {
         "isDefault": true,
         "kind": "build"

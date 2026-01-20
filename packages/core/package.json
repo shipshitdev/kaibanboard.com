@@ -1,7 +1,8 @@
 {
   "description": "Core types and task parser for Kaiban Board",
   "devDependencies": {
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "vitest": "4.0.17"
   },
   "exports": {
     ".": {
@@ -23,7 +24,9 @@
   },
   "scripts": {
     "build": "tsc",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
   },
   "types": "./dist/index.d.ts",
   "version": "0.4.0"

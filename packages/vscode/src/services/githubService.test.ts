@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import { GitHubService } from "./githubService";
 
 // Mock child_process
@@ -10,18 +10,18 @@ vi.mock("node:util", () => ({
   promisify: vi.fn((fn) => fn),
 }));
 
+// Import mocked modules after vi.mock
+import * as childProcess from "node:child_process";
+
+const mockExec = childProcess.exec as unknown as Mock;
+
 describe("GitHubService", () => {
   let service: GitHubService;
-  let mockExec: ReturnType<typeof vi.fn>;
 
   const workspacePath = "/test/workspace";
 
   beforeEach(() => {
     service = new GitHubService(workspacePath);
-
-    // biome-ignore lint/suspicious/noExplicitAny: test mock
-    const childProcess = require("node:child_process") as any;
-    mockExec = childProcess.exec;
     mockExec.mockReset();
   });
 

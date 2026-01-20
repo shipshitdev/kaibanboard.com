@@ -3,6 +3,7 @@ import * as vscode from "vscode";
 import { AIMergeService } from "./services/aiMergeService";
 import { ClaudeCodeQuotaService } from "./services/claudeCodeQuotaService";
 import { CLIDetectionService } from "./services/cliDetectionService";
+import { CodexQuotaService } from "./services/codexQuotaService";
 import { CodexReviewService } from "./services/codexReviewService";
 import { GitHubService } from "./services/githubService";
 import { GitService } from "./services/gitService";
@@ -16,6 +17,8 @@ import { formatResetTime, getQuotaStatus } from "./types/claudeQuota";
 import type { ClaudeStepProgress } from "./types/claudeTranscript";
 import type { CLIAvailabilityStatus, CLIProviderName, CLISelectionMode } from "./types/cli";
 import { getCLIDisplayName } from "./types/cli";
+import type { CodexQuotaDisplayData } from "./types/codexQuota";
+import { formatCodexResetTime, getCodexQuotaStatus } from "./types/codexQuota";
 import type { GitHubIssue } from "./types/github";
 import type { MergeState } from "./types/merge";
 import type { CodexReviewResult, ReviewState } from "./types/review";
@@ -28,6 +31,7 @@ export class KanbanViewProvider {
   private skillService: SkillService;
   private prdInterviewService: PRDInterviewService;
   private quotaService: ClaudeCodeQuotaService;
+  private codexQuotaService: CodexQuotaService;
   private cliDetectionService: CLIDetectionService;
   private transcriptMonitorService: TranscriptMonitorService;
   private pollingIntervals: Map<string, NodeJS.Timeout> = new Map();
@@ -62,6 +66,7 @@ export class KanbanViewProvider {
     this.skillService = new SkillService();
     this.prdInterviewService = new PRDInterviewService();
     this.quotaService = new ClaudeCodeQuotaService();
+    this.codexQuotaService = new CodexQuotaService();
     this.cliDetectionService = new CLIDetectionService();
     this.transcriptMonitorService = new TranscriptMonitorService();
 
@@ -133,11 +138,17 @@ export class KanbanViewProvider {
     }
     this.pollingIntervals.clear();
 
-    // Dispose all terminals
+    // Dispose all CLI terminals
     for (const [, terminal] of this.claudeTerminals) {
       terminal.dispose();
     }
     this.claudeTerminals.clear();
+
+    // Dispose all review terminals
+    for (const [, terminal] of this.reviewTerminals) {
+      terminal.dispose();
+    }
+    this.reviewTerminals.clear();
 
     // Dispose all file watchers
     for (const [, watcher] of this.completionWatchers) {
@@ -194,7 +205,7 @@ export class KanbanViewProvider {
             await this.refresh();
             break;
           case "openSettings":
-            await vscode.commands.executeCommand("kaiban.configurePRDPath");
+            await vscode.commands.executeCommand("kaiban.configure");
             break;
           case "openExtensionSettings":
             await vscode.commands.executeCommand("workbench.action.openSettings", "kaiban");
@@ -256,6 +267,12 @@ export class KanbanViewProvider {
           case "refreshClaudeQuota":
             await this.handleRefreshClaudeQuota();
             break;
+          case "getCodexQuota":
+            await this.handleGetCodexQuota();
+            break;
+          case "refreshCodexQuota":
+            await this.handleRefreshCodexQuota();
+            break;
           case "getCLIStatus":
             await this.handleGetCLIStatus();
             break;
@@ -315,6 +332,10 @@ export class KanbanViewProvider {
           case "generateChangelog":
             await vscode.commands.executeCommand("kaiban.generateChangelog");
             break;
+          // Project initialization handler
+          case "initializeProject":
+            await this.handleInitializeProject();
+            break;
         }
       },
       undefined,
@@ -330,7 +351,7 @@ export class KanbanViewProvider {
   }
 
   /**
-   * Start auto-refresh for Claude quota (every 5 minutes)
+   * Start auto-refresh for Claude and Codex quota (every 5 minutes)
    */
   private startQuotaAutoRefresh(): void {
     // Clear existing interval if any
@@ -341,6 +362,7 @@ export class KanbanViewProvider {
     // Refresh every 5 minutes (300000ms)
     this.quotaRefreshInterval = setInterval(async () => {
       await this.handleGetClaudeQuota();
+      await this.handleGetCodexQuota();
     }, 300000);
   }
 
@@ -376,6 +398,143 @@ export class KanbanViewProvider {
   private async handleRefreshClaudeQuota(): Promise<void> {
     this.quotaService.clearCache();
     await this.handleGetClaudeQuota();
+  }
+
+  /**
+   * Handle get Codex quota request
+   */
+  private async handleGetCodexQuota(): Promise<void> {
+    if (!this.panel) return;
+
+    // Send loading state
+    this.panel.webview.postMessage({
+      command: "codexQuotaLoading",
+    });
+
+    try {
+      const quotaData = await this.codexQuotaService.getQuota();
+
+      this.panel.webview.postMessage({
+        command: "codexQuotaUpdate",
+        data: this.serializeCodexQuotaData(quotaData),
+      });
+    } catch (error) {
+      this.panel.webview.postMessage({
+        command: "codexQuotaError",
+        error: String(error),
+      });
+    }
+  }
+
+  /**
+   * Handle manual refresh of Codex quota
+   */
+  private async handleRefreshCodexQuota(): Promise<void> {
+    this.codexQuotaService.clearCache();
+    await this.handleGetCodexQuota();
+  }
+
+  /**
+   * Serialize Codex quota data for webview (convert Dates to strings)
+   */
+  private serializeCodexQuotaData(data: CodexQuotaDisplayData): {
+    usage: {
+      sessionLimit: {
+        utilization: number;
+        resetsAt: string;
+        resetTimeFormatted: string;
+        status: string;
+      } | null;
+      weeklyLimit: {
+        utilization: number;
+        resetsAt: string;
+        resetTimeFormatted: string;
+        status: string;
+      } | null;
+      codeReviewLimit: {
+        utilization: number;
+        resetsAt: string;
+        resetTimeFormatted: string;
+        status: string;
+      } | null;
+      planType: string;
+      lastUpdated: string;
+    } | null;
+    error: string | null;
+    isLoading: boolean;
+    isAvailable: boolean;
+  } {
+    if (!data.usage) {
+      return {
+        usage: null,
+        error: data.error,
+        isLoading: data.isLoading,
+        isAvailable: data.isAvailable,
+      };
+    }
+
+    const serializeWindow = (
+      window: { utilization: number; resetsAt: Date; windowSeconds: number } | null
+    ) => {
+      if (!window) return null;
+      return {
+        utilization: window.utilization,
+        resetsAt: window.resetsAt.toISOString(),
+        resetTimeFormatted: formatCodexResetTime(window.resetsAt),
+        status: getCodexQuotaStatus(window.utilization),
+      };
+    };
+
+    return {
+      usage: {
+        sessionLimit: serializeWindow(data.usage.sessionLimit),
+        weeklyLimit: serializeWindow(data.usage.weeklyLimit),
+        codeReviewLimit: serializeWindow(data.usage.codeReviewLimit),
+        planType: data.usage.planType,
+        lastUpdated: data.usage.lastUpdated.toISOString(),
+      },
+      error: data.error,
+      isLoading: data.isLoading,
+      isAvailable: data.isAvailable,
+    };
+  }
+
+  /**
+   * Handle project initialization - creates .agent folder structure
+   */
+  private async handleInitializeProject(): Promise<void> {
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders || workspaceFolders.length === 0) {
+      vscode.window.showErrorMessage("No workspace folder open");
+      return;
+    }
+
+    const workspaceRoot = workspaceFolders[0].uri.fsPath;
+    const agentPath = path.join(workspaceRoot, ".agent");
+    const folders = ["TASKS", "PRDS", "SESSIONS", "SYSTEM"];
+
+    try {
+      const fs = await import("node:fs");
+
+      // Create .agent folder if it doesn't exist
+      if (!fs.existsSync(agentPath)) {
+        fs.mkdirSync(agentPath, { recursive: true });
+      }
+
+      // Create subfolders
+      for (const folder of folders) {
+        const folderPath = path.join(agentPath, folder);
+        if (!fs.existsSync(folderPath)) {
+          fs.mkdirSync(folderPath, { recursive: true });
+        }
+      }
+
+      vscode.window.showInformationMessage(".agent folder structure created successfully!");
+      await this.refresh();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      vscode.window.showErrorMessage(`Failed to create folder structure: ${message}`);
+    }
   }
 
   /**
@@ -592,8 +751,10 @@ export class KanbanViewProvider {
       terminal.show();
       terminal.sendText(fullCommand);
 
-      // Update task status to In Progress
-      await this.taskParser.updateTaskStatus(taskId, "In Progress");
+      // Update task status - keep in AI Review if already there, otherwise move to In Progress
+      if (task.status !== "AI Review") {
+        await this.taskParser.updateTaskStatus(taskId, "In Progress");
+      }
 
       // Notify user
       vscode.window.showInformationMessage(
@@ -739,8 +900,10 @@ Please address all the review findings above while implementing the task.`;
       terminal.show();
       terminal.sendText(fullCommand);
 
-      // Update task status to In Progress
-      await this.taskParser.updateTaskStatus(taskId, "In Progress");
+      // Update task status - keep in AI Review if already there, otherwise move to In Progress
+      if (task.status !== "AI Review") {
+        await this.taskParser.updateTaskStatus(taskId, "In Progress");
+      }
 
       // Notify user
       vscode.window.showInformationMessage(`Pipeline: Executing with Ralph Loop: ${task.label}`);
@@ -782,10 +945,40 @@ Please address all the review findings above while implementing the task.`;
    * This is called when a task's status is manually or automatically changed.
    */
   private async handlePipelineStatusChange(taskId: string, newStatus: string): Promise<void> {
+    // Log status change to terminal
+    const statusEmoji: Record<string, string> = {
+      Backlog: "📋",
+      Planning: "📝",
+      "In Progress": "🔨",
+      "AI Review": "🤖",
+      "Human Review": "👤",
+      Done: "✅",
+      Archived: "📦",
+      Blocked: "🚫",
+    };
+    const emoji = statusEmoji[newStatus] || "📌";
+
+    // Get task label for better logging
+    const tasks = await this.taskParser.parseTasks();
+    const task = tasks.find((t) => t.id === taskId);
+    const taskLabel = task?.label || taskId;
+
+    // Notify webview of status change for terminal logging
+    if (this.panel) {
+      this.panel.webview.postMessage({
+        command: "taskStatusChanged",
+        taskId,
+        taskLabel,
+        newStatus,
+        emoji,
+      });
+    }
+
     // Check if pipeline is enabled
     const pipelineConfig = vscode.workspace.getConfiguration("kaiban.pipeline");
     const pipelineEnabled = pipelineConfig.get<boolean>("enabled", true);
     const autoReview = pipelineConfig.get<boolean>("autoReviewOnAIReview", true);
+    const autoInterview = pipelineConfig.get<boolean>("autoInterviewOnPlanning", true);
 
     if (!pipelineEnabled) {
       return; // Pipeline disabled - no auto-actions
@@ -793,6 +986,19 @@ Please address all the review findings above while implementing the task.`;
 
     // Handle status-specific auto-triggers
     switch (newStatus) {
+      case "Planning": {
+        if (autoInterview && task) {
+          // Auto-trigger PRD interview when task moves to Planning
+          vscode.window.showInformationMessage("Pipeline: Auto-starting PRD interview...");
+
+          // Small delay to let status update propagate
+          setTimeout(async () => {
+            await this.handleAutoInterviewForPlanning(taskId, task);
+          }, 500);
+        }
+        break;
+      }
+
       case "AI Review": {
         if (autoReview) {
           // Auto-trigger Codex review when task moves to AI Review
@@ -1084,6 +1290,135 @@ Please address all the review findings above while implementing the task.`;
     } catch (error) {
       vscode.window.showErrorMessage(`Failed to create PRD: ${error}`);
     }
+  }
+
+  /**
+   * Auto-trigger PRD interview when task moves to Planning column.
+   * If task has no PRD, creates one and starts interview.
+   * If task has PRD, starts Claude CLI to validate/expand the existing PRD.
+   */
+  private async handleAutoInterviewForPlanning(taskId: string, task: Task): Promise<void> {
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders) {
+      vscode.window.showErrorMessage("No workspace folder open");
+      return;
+    }
+
+    const workspaceFolder = workspaceFolders[0];
+
+    // Notify webview that planning is starting
+    if (this.panel) {
+      this.panel.webview.postMessage({
+        command: "planningStarted",
+        taskId,
+      });
+    }
+
+    try {
+      if (!task.prdPath || task.prdPath.trim() === "") {
+        // No PRD - create one and start interview using task label
+        const result = await this.prdInterviewService.startInterview({
+          name: task.label,
+          taskContext: {
+            taskId: task.id,
+            label: task.label,
+            description: task.description,
+          },
+        });
+
+        if (result) {
+          // Get PRD base path from configuration
+          const config = vscode.workspace.getConfiguration("kaiban.prd");
+          const basePath = config.get<string>("basePath", ".agent/PRDS");
+
+          // Update task file to link to PRD
+          const relativePrdPath = `../${basePath}/${result.slug}.md`;
+          await this.taskParser.updateTaskPRD(taskId, relativePrdPath);
+
+          // Refresh to show updated PRD link
+          await this.refresh();
+
+          // Notify webview
+          if (this.panel) {
+            this.panel.webview.postMessage({
+              command: "terminalOutput",
+              content: `📝 Created PRD and started interview for "${task.label}"`,
+              type: "success",
+            });
+          }
+        }
+      } else {
+        // Has PRD - start Claude CLI to validate/expand the existing PRD
+        const prdUri = this.resolvePrdPath(task.prdPath);
+        if (!prdUri) {
+          vscode.window.showErrorMessage("Could not resolve PRD path");
+          return;
+        }
+
+        const relativePrdPath = path.relative(workspaceFolder.uri.fsPath, prdUri.fsPath);
+
+        // Build validation/expansion prompt
+        const validationPrompt = `Read this @${relativePrdPath} and validate it for completeness. Interview me using the AskUserQuestionTool about any missing details, unclear requirements, edge cases, or technical considerations. Be thorough - ask about UI/UX, error handling, security, performance, and any ambiguous areas. Once complete, update the PRD file with the additional details.
+
+Task context:
+- Task ID: ${task.id}
+- Label: ${task.label}
+${task.description ? `- Description: ${task.description}` : ""}`;
+
+        // Get Claude CLI configuration
+        const config = vscode.workspace.getConfiguration("kaiban.claude");
+        const claudePath = config.get<string>("executablePath", "claude");
+        const additionalFlags = config.get<string>("additionalFlags", "");
+
+        // Build command
+        const flags = additionalFlags ? `${additionalFlags} ` : "";
+        const escapedPrompt = this.escapeForShell(validationPrompt);
+        const fullCommand = `${claudePath} ${flags}"${escapedPrompt}"`;
+
+        // Create and show terminal
+        const terminal = vscode.window.createTerminal({
+          name: `PRD Validation: ${task.label.substring(0, 30)}`,
+          cwd: workspaceFolder.uri.fsPath,
+        });
+
+        terminal.show();
+        terminal.sendText(fullCommand);
+
+        // Notify webview
+        if (this.panel) {
+          this.panel.webview.postMessage({
+            command: "terminalOutput",
+            content: `📝 Started PRD validation for "${task.label}"`,
+            type: "success",
+          });
+        }
+
+        vscode.window.showInformationMessage(
+          `Claude will validate and expand the PRD for "${task.label}". Answer the interview questions in the terminal.`
+        );
+      }
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to start PRD interview: ${error}`);
+      if (this.panel) {
+        this.panel.webview.postMessage({
+          command: "planningFailed",
+          taskId,
+          error: String(error),
+        });
+      }
+    }
+  }
+
+  /**
+   * Escape string for shell command.
+   */
+  private escapeForShell(str: string): string {
+    return str
+      .replace(/\\/g, "\\\\")
+      .replace(/"/g, '\\"')
+      .replace(/\n/g, "\\n")
+      .replace(/\$/g, "\\$")
+      .replace(/`/g, "\\`");
   }
 
   private async handleEditPRD(prdPath: string) {
@@ -1526,9 +1861,10 @@ Please address all the review findings above while implementing the task.`;
   }
 
   private async handleStopClaudeExecution(taskId: string) {
-    const terminal = this.claudeTerminals.get(taskId);
-    if (terminal) {
-      terminal.dispose(); // Kill the terminal
+    // Check for CLI terminal
+    const cliTerminal = this.claudeTerminals.get(taskId);
+    if (cliTerminal) {
+      cliTerminal.dispose();
       this.claudeTerminals.delete(taskId);
       this.cleanupTaskTracking(taskId);
 
@@ -1540,6 +1876,33 @@ Please address all the review findings above while implementing the task.`;
           taskId,
         });
       }
+      return;
+    }
+
+    // Check for review terminal
+    const reviewTerminal = this.reviewTerminals.get(taskId);
+    if (reviewTerminal) {
+      reviewTerminal.dispose();
+      this.reviewTerminals.delete(taskId);
+
+      // Update review state to failed
+      const reviewState = this.activeReviewStates.get(taskId);
+      if (reviewState) {
+        reviewState.status = "failed";
+        reviewState.error = "Review cancelled by user";
+        this.activeReviewStates.set(taskId, reviewState);
+      }
+
+      vscode.window.showInformationMessage("Stopped review");
+
+      if (this.panel) {
+        this.panel.webview.postMessage({
+          command: "reviewFailed",
+          data: { taskId, error: "Review cancelled by user" },
+        });
+      }
+
+      await this.refresh();
     }
   }
 
@@ -1699,8 +2062,10 @@ Please address all the review findings above while implementing the task.`;
       terminal.show();
       terminal.sendText(fullCommand);
 
-      // Update task status to In Progress
-      await this.taskParser.updateTaskStatus(taskId, "In Progress");
+      // Update task status - keep in AI Review if already there, otherwise move to In Progress
+      if (task.status !== "AI Review") {
+        await this.taskParser.updateTaskStatus(taskId, "In Progress");
+      }
 
       // Set up completion tracking for batch
       this.watchForBatchCompletion(taskId);
@@ -2001,21 +2366,39 @@ Please address all the review findings above while implementing the task.`;
     const isEmpty = totalTasks === 0;
 
     // Track which tasks are currently running via Claude terminal
-    const runningTaskIds = new Set(this.claudeTerminals.keys());
+    const terminalRunningIds = new Set(this.claudeTerminals.keys());
+
+    // Track tasks with active review terminal
+    const reviewTerminalIds = new Set(this.reviewTerminals.keys());
+
+    // Track tasks with active review in progress (state-based)
+    const reviewInProgressIds = new Set(
+      [...this.activeReviewStates.entries()]
+        .filter(([, state]) => state.status === "in_progress")
+        .map(([id]) => id)
+    );
 
     const renderTask = (task: Task) => {
+      console.log(`[RenderTask] Task ${task.id}: prdPath="${task.prdPath}"`);
       const priorityClass = task.priority.toLowerCase();
       const completedClass = task.completed ? "completed" : "";
       const isInPlanning = task.status === "Planning";
       const isInProgress = task.status === "In Progress";
       const isInAIReview = task.status === "AI Review";
-      // Check if task is running via Claude terminal (but not if already Done)
-      const isRunningViaClaude = runningTaskIds.has(task.id) && task.status !== "Done";
-      const runningClass = isRunningViaClaude ? "running" : "";
+
+      // Combined running state: terminal OR review in progress OR review terminal (but not if already Done)
+      const isRunningViaTerminal = terminalRunningIds.has(task.id) && task.status !== "Done";
+      const isRunningViaReviewState = reviewInProgressIds.has(task.id) && task.status !== "Done";
+      const isRunningViaReviewTerminal = reviewTerminalIds.has(task.id) && task.status !== "Done";
+      const isRunning =
+        isRunningViaTerminal || isRunningViaReviewState || isRunningViaReviewTerminal;
+      const runningClass = isRunning ? "running" : "";
+
       const canExecuteViaClaude =
-        (isInPlanning || isInProgress || isInAIReview) &&
-        !isRunningViaClaude &&
-        task.status !== "Done";
+        (isInPlanning || isInProgress || isInAIReview) && !isRunning && task.status !== "Done";
+
+      // Get review badge for AI Review column
+      const reviewBadge = isInAIReview ? this.renderReviewBadge(task.id) : "";
 
       return `
         <div class="task-card ${priorityClass} ${completedClass} ${runningClass}"
@@ -2029,12 +2412,13 @@ Please address all the review findings above while implementing the task.`;
              data-order="${task.order !== undefined ? task.order : ""}">
           <div class="task-header">
             <span class="task-title">${this.escapeHtml(task.label)}</span>
-            ${canExecuteViaClaude || isRunningViaClaude ? `<button class="play-stop-btn${isRunningViaClaude ? " running" : ""}" onclick="event.stopPropagation(); toggleExecution('${task.id}')" title="${isRunningViaClaude ? "Stop execution" : "Execute via Claude CLI"}">${isRunningViaClaude ? "⏹" : "▶"}</button>${!isRunningViaClaude ? `<button class="rate-limit-btn" onclick="event.stopPropagation(); triggerRateLimitFromUI('${task.id}')" title="Set rate limit wait timer">⏱</button>` : ""}` : ""}
+            ${canExecuteViaClaude || isRunning ? `<button class="play-stop-btn${isRunning ? " running" : ""}" onclick="event.stopPropagation(); toggleExecution('${task.id}')" title="${isRunning ? "Stop execution" : "Execute via Claude CLI"}">${isRunning ? "⏹" : "▶"}</button>${!isRunning ? `<button class="rate-limit-btn" onclick="event.stopPropagation(); triggerRateLimitFromUI('${task.id}')" title="Set rate limit wait timer">⏱</button>` : ""}` : ""}
           </div>
           <div class="task-meta">
             <span class="badge priority-${priorityClass}">${task.priority}</span>
             <span class="badge type">${task.type}</span>
             ${task.rejectionCount > 0 ? `<span class="badge rejection-badge">${Icons.rotateCcw(14)} ${task.rejectionCount}</span>` : ""}
+            ${reviewBadge}
           </div>
           <div class="task-footer">
             <span class="project-name">${this.escapeHtml(task.project)}</span>
@@ -2101,6 +2485,45 @@ Please address all the review findings above while implementing the task.`;
           <span class="quota-error-text" id="quotaErrorText"></span>
         </div>
       </div>
+      <!-- Codex Quota Widget -->
+      <div class="quota-widget codex-quota-widget" id="codexQuotaWidget">
+        <div class="quota-loading" id="codexQuotaLoading">
+          ${Icons.refresh(14)} Codex...
+        </div>
+        <div class="quota-content" id="codexQuotaContent" style="display: none;">
+          <!-- Primary bar (5h session limit - always visible) -->
+          <div class="quota-primary">
+            <span class="quota-label codex-label">CX</span>
+            <div class="quota-bar">
+              <div class="quota-bar-fill" id="codexQuota5h" data-status="good"></div>
+            </div>
+            <span class="quota-value" id="codexQuota5hValue">0%</span>
+          </div>
+          <!-- Expanded bars (visible on hover) -->
+          <div class="quota-expanded">
+            <div class="quota-bar-group" title="7-day weekly limit">
+              <span class="quota-label">7d</span>
+              <div class="quota-bar">
+                <div class="quota-bar-fill" id="codexQuota7d" data-status="good"></div>
+              </div>
+              <span class="quota-value" id="codexQuota7dValue">0%</span>
+            </div>
+            <div class="quota-bar-group codex-review-group" id="codexReviewGroup" title="Code review limit">
+              <span class="quota-label">CR</span>
+              <div class="quota-bar">
+                <div class="quota-bar-fill" id="codexQuotaReview" data-status="good"></div>
+              </div>
+              <span class="quota-value" id="codexQuotaReviewValue">0%</span>
+            </div>
+            <button class="quota-refresh-btn" onclick="refreshCodexQuota()" title="Refresh Codex quota">
+              ${Icons.refresh(12)}
+            </button>
+          </div>
+        </div>
+        <div class="quota-error" id="codexQuotaError" style="display: none;">
+          <span class="quota-error-text" id="codexQuotaErrorText"></span>
+        </div>
+      </div>
       ${
         !isEmpty
           ? `<div class="header-actions">
@@ -2134,6 +2557,7 @@ Please address all the review findings above while implementing the task.`;
               )
               .join("")}
             <div class="settings-divider"></div>
+            <a class="settings-link" onclick="initializeProject()">Initialize Project...</a>
             <a class="settings-link" onclick="openSettings()">More Settings...</a>
           </div>
         </div>
@@ -2145,50 +2569,39 @@ Please address all the review findings above while implementing the task.`;
       }
     </div>
 
-  <div class="board" id="kanbanBoard">
+  <div class="board" id="kanbanBoard" style="grid-template-columns: repeat(${enabledColumns.length}, minmax(200px, 1fr));">
     ${
       isEmpty
         ? `
     <div style="grid-column: 1 / -1; display: flex; align-items: center; justify-content: center; padding: 40px;">
       <div class="empty-state-setup">
         <h3>Welcome to Kaiban Board!</h3>
-        <p>Get started by creating your first task. Here's how:</p>
-        <ol>
-          <li>Create the folder structure in your workspace root:
-            <br><code>mkdir -p .agent/TASKS .agent/PRDS</code>
-          </li>
-          <li>Create a task file in <code>.agent/TASKS/</code> (e.g., <code>my-task.md</code>)</li>
-          <li>Use this template:
-            <pre style="background: var(--vscode-textCodeBlock-background); padding: 12px; border-radius: 6px; margin-top: 8px; text-align: left; font-size: 12px; overflow-x: auto;"><code>## Task: My Task Title
+        <p>Set up your project structure to get started:</p>
 
-**ID:** task-001
-**Label:** My Task Title
-**Description:** Task description
-**Type:** Feature
-**Status:** Backlog
-**Priority:** Medium
-**Created:** ${new Date().toISOString().split("T")[0]}
-**Updated:** ${new Date().toISOString().split("T")[0]}
-**PRD:** [Link](../PRDS/my-task-prd.md)
+        <div class="onboarding-actions" style="margin: 24px 0; display: flex; justify-content: center;">
+          <button class="action-btn primary-btn" onclick="initializeProject()" title="Initialize Project Structure" style="font-size: 14px; padding: 10px 20px;">
+            ${Icons.folder(16)} Initialize Project Structure
+          </button>
+        </div>
 
----
+        <p style="font-size: 13px; color: var(--vscode-descriptionForeground); margin-bottom: 12px;">
+          This will create:
+        </p>
+        <ul style="text-align: left; list-style: none; padding: 0; margin: 0 auto; max-width: 300px;">
+          <li style="padding: 4px 0;"><code>.agent/TASKS</code> - Your task files</li>
+          <li style="padding: 4px 0;"><code>.agent/PRDS</code> - Product requirement documents</li>
+          <li style="padding: 4px 0;"><code>.agent/SESSIONS</code> - Session logs</li>
+          <li style="padding: 4px 0;"><code>.agent/SYSTEM</code> - System configuration</li>
+        </ul>
 
-## Additional Notes
-Your task details here...</code></pre>
-          </li>
-          <li>Click <strong>Refresh</strong> below to see your task appear!</li>
-        </ol>
         <div class="onboarding-actions" style="margin-top: 24px; display: flex; gap: 12px; justify-content: center;">
           <button class="action-btn secondary-btn" onclick="openExtensionSettings()" title="Settings">
             ${Icons.settings(16)} Settings
           </button>
-          <button class="action-btn primary-btn" onclick="refresh()" title="Refresh">
+          <button class="action-btn secondary-btn" onclick="refresh()" title="Refresh">
             ${Icons.refresh(16)} Refresh
           </button>
         </div>
-        <p style="margin-top: 16px; font-size: 13px; color: var(--vscode-descriptionForeground);">
-          See the README for detailed setup instructions and examples.
-        </p>
       </div>
     </div>
         `
@@ -2325,6 +2738,34 @@ ${allColumns
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#039;");
+  }
+
+  /**
+   * Render review badge for tasks in AI Review column
+   */
+  private renderReviewBadge(taskId: string): string {
+    const reviewState = this.activeReviewStates.get(taskId);
+
+    if (!reviewState) {
+      return '<span class="badge review-badge pending" data-review-status="pending">⏳ Pending</span>';
+    }
+
+    switch (reviewState.status) {
+      case "in_progress":
+        return '<span class="badge review-badge reviewing" data-review-status="in_progress">⟳ Reviewing</span>';
+      case "completed":
+        if (reviewState.result?.overallRating === "pass") {
+          return '<span class="badge review-badge passed" data-review-status="passed">✓ Passed</span>';
+        }
+        if (reviewState.result?.overallRating === "critical_issues") {
+          return '<span class="badge review-badge failed" data-review-status="critical_issues">✗ Issues</span>';
+        }
+        return '<span class="badge review-badge needs-work" data-review-status="needs_work">⚠ Needs Work</span>';
+      case "failed":
+        return '<span class="badge review-badge failed" data-review-status="failed">✗ Failed</span>';
+      default:
+        return '<span class="badge review-badge pending" data-review-status="pending">⏳ Pending</span>';
+    }
   }
 
   // ============ GitHub Integration Handlers ============
@@ -2842,14 +3283,26 @@ ${allColumns
 
   // ============ Review Handlers ============
 
+  // Track review terminals separately
+  private reviewTerminals: Map<string, vscode.Terminal> = new Map();
+
   /**
-   * Start a code review for a task
+   * Start a code review for a task using a visible VS Code terminal
    */
   private async handleStartReview(taskId: string, options?: { useCodex?: boolean }): Promise<void> {
     if (!this.codexReviewService || !this.gitWorktreeService) {
       vscode.window.showErrorMessage("Review services not available");
       return;
     }
+
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders) {
+      vscode.window.showErrorMessage("No workspace folder open");
+      return;
+    }
+
+    const workspaceFolder = workspaceFolders[0];
+    const workspacePath = workspaceFolder.uri.fsPath;
 
     try {
       const tasks = await this.taskParser.parseTasks();
@@ -2860,8 +3313,17 @@ ${allColumns
         return;
       }
 
+      // Check if already reviewing
+      if (this.reviewTerminals.has(taskId)) {
+        vscode.window.showWarningMessage("Review already in progress for this task");
+        const existingTerminal = this.reviewTerminals.get(taskId);
+        existingTerminal?.show();
+        return;
+      }
+
       // Check Codex availability
       const codexStatus = await this.codexReviewService.getCodexStatus();
+      const useCodex = options?.useCodex !== false && codexStatus.available;
 
       // Get diff for review
       let diff: string;
@@ -2871,10 +3333,24 @@ ${allColumns
         diff = await this.gitWorktreeService.getWorktreeDiff(taskId);
         filesChanged = await this.gitWorktreeService.getChangedFiles(taskId);
       } else {
-        // No worktree - review recent commits (fallback)
-        vscode.window.showWarningMessage("No worktree branch found. Review will be limited.");
-        diff = "";
-        filesChanged = [];
+        // No worktree - try to get staged/unstaged changes
+        try {
+          const { exec } = await import("node:child_process");
+          const { promisify } = await import("node:util");
+          const execAsync = promisify(exec);
+          const { stdout: diffOutput } = await execAsync("git diff HEAD", {
+            cwd: workspacePath,
+            maxBuffer: 5 * 1024 * 1024,
+          });
+          diff = diffOutput;
+          const { stdout: filesOutput } = await execAsync("git diff --name-only HEAD", {
+            cwd: workspacePath,
+          });
+          filesChanged = filesOutput.split("\n").filter(Boolean);
+        } catch {
+          diff = "";
+          filesChanged = [];
+        }
       }
 
       if (!diff || diff.length === 0) {
@@ -2904,46 +3380,124 @@ ${allColumns
         prdContent = await this.loadPRDContentRaw(task.prdPath);
       }
 
-      // Run the review
-      const result = await this.codexReviewService.runReview(
-        {
-          taskLabel: task.label,
-          taskDescription: task.description,
-          prdContent,
-          diff,
-          filesChanged,
-          focusAreas: ["bug", "security", "performance"],
-        },
-        options?.useCodex !== false && codexStatus.available
-      );
+      // Build the review prompt
+      const reviewPrompt = this.codexReviewService.buildReviewPrompt({
+        taskLabel: task.label,
+        taskDescription: task.description || "",
+        prdContent,
+        diff,
+        filesChanged,
+        focusAreas: ["bug", "security", "performance"],
+      });
 
-      // Update state
-      reviewState.status = "completed";
-      reviewState.result = result;
-      reviewState.completedAt = new Date().toISOString();
-      this.activeReviewStates.set(taskId, reviewState);
+      // Write prompt to temp file
+      const fs = await import("node:fs");
+      const promptFile = path.join(workspacePath, ".kaiban-review-prompt.txt");
+      const resultFile = path.join(workspacePath, ".kaiban-review-result.json");
+      fs.writeFileSync(promptFile, reviewPrompt, "utf-8");
 
-      // Notify webview
-      if (this.panel) {
-        this.panel.webview.postMessage({
-          command: "reviewComplete",
-          data: {
-            taskId,
-            result,
-            formattedResult: this.codexReviewService.formatReviewForDisplay(result),
-          },
-        });
-      }
+      // Clean up old result file if exists
+      try {
+        fs.unlinkSync(resultFile);
+      } catch {}
 
-      // Show summary
-      const ratingEmoji =
-        result.overallRating === "pass" ? "✅" : result.overallRating === "needs_work" ? "⚠️" : "❌";
+      // Build the command based on provider
+      const cliPath = useCodex ? "codex" : "claude";
+      const cliFlags = useCodex ? "" : "--print";
+      const command = `cat "${promptFile}" | ${cliPath} ${cliFlags} | tee "${resultFile}" && echo "\\n✅ Review complete - results saved"`;
+
+      // Create and show terminal
+      const terminal = vscode.window.createTerminal({
+        name: `🔍 Review: ${task.label.substring(0, 25)}`,
+        cwd: workspacePath,
+      });
+
+      this.reviewTerminals.set(taskId, terminal);
+      terminal.show();
+      terminal.sendText(command);
+
+      // Watch for terminal close to parse results
+      const closeListener = vscode.window.onDidCloseTerminal(async (closedTerminal) => {
+        if (closedTerminal === terminal) {
+          closeListener.dispose();
+          this.reviewTerminals.delete(taskId);
+
+          // Try to parse results from file
+          try {
+            const resultContent = fs.readFileSync(resultFile, "utf-8");
+            const result = this.parseReviewResult(
+              resultContent,
+              filesChanged,
+              diff.split("\n").length
+            );
+
+            // Update state
+            reviewState.status = "completed";
+            reviewState.result = result;
+            reviewState.completedAt = new Date().toISOString();
+            this.activeReviewStates.set(taskId, reviewState);
+
+            // Notify webview
+            if (this.panel) {
+              this.panel.webview.postMessage({
+                command: "reviewComplete",
+                data: {
+                  taskId,
+                  result,
+                  formattedResult: this.codexReviewService?.formatReviewForDisplay(result) || "",
+                },
+              });
+            }
+
+            // Show summary
+            const ratingEmoji =
+              result.overallRating === "pass"
+                ? "✅"
+                : result.overallRating === "needs_work"
+                  ? "⚠️"
+                  : "❌";
+            vscode.window.showInformationMessage(
+              `${ratingEmoji} Review complete: ${result.overallRating} (${result.findings.length} findings)`
+            );
+
+            // Pipeline auto-advancement logic
+            await this.handlePipelineReviewCompletion(taskId, result);
+
+            // Clean up temp files
+            try {
+              fs.unlinkSync(promptFile);
+              fs.unlinkSync(resultFile);
+            } catch {}
+          } catch {
+            // Result file doesn't exist or couldn't be parsed
+            reviewState.status = "failed";
+            reviewState.error = "Review output could not be parsed";
+            this.activeReviewStates.set(taskId, reviewState);
+
+            if (this.panel) {
+              this.panel.webview.postMessage({
+                command: "reviewFailed",
+                data: { taskId, error: "Review output could not be parsed" },
+              });
+            }
+
+            // Clean up prompt file
+            try {
+              fs.unlinkSync(promptFile);
+            } catch {}
+          }
+
+          // Refresh to update UI
+          await this.refresh();
+        }
+      });
+
+      // Store listener for cleanup
+      this.context.subscriptions.push(closeListener);
+
       vscode.window.showInformationMessage(
-        `${ratingEmoji} Review complete: ${result.overallRating} (${result.findings.length} findings)`
+        `🔍 Starting ${useCodex ? "Codex" : "Claude"} review for "${task.label}". Watch the terminal for progress.`
       );
-
-      // Pipeline auto-advancement logic
-      await this.handlePipelineReviewCompletion(taskId, result);
     } catch (error) {
       const reviewState = this.activeReviewStates.get(taskId);
       if (reviewState) {
@@ -2952,8 +3506,75 @@ ${allColumns
         this.activeReviewStates.set(taskId, reviewState);
       }
 
+      if (this.panel) {
+        this.panel.webview.postMessage({
+          command: "reviewFailed",
+          data: { taskId, error: String(error) },
+        });
+      }
+
       vscode.window.showErrorMessage(`Review failed: ${error}`);
     }
+  }
+
+  /**
+   * Parse review result from CLI output
+   */
+  private parseReviewResult(
+    response: string,
+    filesChanged: string[],
+    linesReviewed: number
+  ): CodexReviewResult {
+    try {
+      // Extract JSON from response
+      const jsonMatch = response.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        return this.createFallbackReviewResult(response, filesChanged, linesReviewed);
+      }
+
+      const parsed = JSON.parse(jsonMatch[0]);
+
+      return {
+        summary: parsed.summary || "Review completed",
+        overallRating: parsed.overallRating || "needs_work",
+        findings: parsed.findings || [],
+        suggestedActions: parsed.suggestedActions || [],
+        filesReviewed: filesChanged,
+        linesReviewed,
+        reviewDuration: 0,
+        reviewedAt: new Date().toISOString(),
+      };
+    } catch {
+      return this.createFallbackReviewResult(response, filesChanged, linesReviewed);
+    }
+  }
+
+  /**
+   * Create fallback review result when parsing fails
+   */
+  private createFallbackReviewResult(
+    response: string,
+    filesChanged: string[],
+    linesReviewed: number
+  ): CodexReviewResult {
+    return {
+      summary: response.substring(0, 500) || "Review completed but could not parse results",
+      overallRating: "needs_work",
+      findings: [
+        {
+          type: "other",
+          severity: "info",
+          filePath: "general",
+          description: "AI response could not be parsed. Please review manually.",
+          suggestion: "Check the terminal output for details",
+        },
+      ],
+      suggestedActions: ["Review the changes manually"],
+      filesReviewed: filesChanged,
+      linesReviewed,
+      reviewDuration: 0,
+      reviewedAt: new Date().toISOString(),
+    };
   }
 
   /**

@@ -73,8 +73,14 @@ export class CoreTaskParser {
         const match = line.match(/^\*\*Updated:\*\*\s*(.+)$/);
         if (match) metadata.updated = match[1].trim();
       } else if (line.startsWith("**PRD:**")) {
-        const match = line.match(/^\*\*PRD:\*\*\s*\[Link\]\((.+)\)$/);
-        if (match) metadata.prd = match[1].trim();
+        // Support both [Link](path) and [Any Text](path) formats
+        const match = line.match(/^\*\*PRD:\*\*\s*\[([^\]]*)\]\((.+)\)$/);
+        console.log("[TaskParser] PRD line found:", JSON.stringify(line));
+        console.log("[TaskParser] PRD regex match:", match);
+        if (match) {
+          metadata.prd = match[2].trim();
+          console.log("[TaskParser] PRD path extracted:", metadata.prd);
+        }
       } else if (line.startsWith("**Order:**")) {
         const match = line.match(/^\*\*Order:\*\*\s*(\d+)$/);
         if (match) metadata.order = parseInt(match[1], 10);
@@ -89,13 +95,17 @@ export class CoreTaskParser {
         if (match) metadata.rejectionCount = parseInt(match[1], 10);
       } else if (line.startsWith("**Agent-Notes:**")) {
         const noteLines: string[] = [];
+        // First, capture any text on the same line as the key
+        const sameLineText = line.replace("**Agent-Notes:**", "").trim();
+        if (sameLineText) noteLines.push(sameLineText);
+        // Then continue with following lines
         let noteIdx = lines.indexOf(line) + 1;
         while (
           noteIdx < lines.length &&
           !lines[noteIdx].startsWith("**") &&
           !lines[noteIdx].startsWith("---")
         ) {
-          if (lines[noteIdx].trim()) noteLines.push(lines[noteIdx]);
+          if (lines[noteIdx].trim()) noteLines.push(lines[noteIdx].trim());
           noteIdx++;
         }
         metadata.agentNotes = noteLines.join("\n");

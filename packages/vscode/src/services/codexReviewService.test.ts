@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import type { ReviewFindingType } from "../types/review";
 import { CodexReviewService } from "./codexReviewService";
 
@@ -16,18 +16,18 @@ vi.mock("node:fs", () => ({
   unlinkSync: vi.fn(),
 }));
 
+// Import mocked modules after vi.mock
+import * as childProcess from "node:child_process";
+
+const mockExec = childProcess.exec as unknown as Mock;
+
 describe("CodexReviewService", () => {
   let service: CodexReviewService;
-  let mockExec: ReturnType<typeof vi.fn>;
 
   const workspacePath = "/test/workspace";
 
   beforeEach(() => {
     service = new CodexReviewService(workspacePath);
-
-    // biome-ignore lint/suspicious/noExplicitAny: test mock
-    const childProcess = require("node:child_process") as any;
-    mockExec = childProcess.exec;
     mockExec.mockReset();
   });
 
@@ -147,9 +147,11 @@ describe("CodexReviewService", () => {
     });
 
     it("should fallback to claude when codex unavailable", async () => {
-      // codex not available
+      // codex not available (getCodexStatus checks codex --version)
       mockExec.mockRejectedValueOnce(new Error("not found"));
-      // claude available for fallback check
+      // claude available for fallback check (getCodexStatus checks claude --version)
+      mockExec.mockResolvedValueOnce({ stdout: "claude v1.0" });
+      // runReview also checks claude --version before calling reviewWithClaude
       mockExec.mockResolvedValueOnce({ stdout: "claude v1.0" });
       // reviewWithClaude
       mockExec.mockResolvedValueOnce({

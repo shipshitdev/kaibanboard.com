@@ -89,7 +89,7 @@ export class ChangelogService {
 
     // Parse the since value - could be a date (YYYY-MM-DD) or we'll compare directly
     const sinceDate = new Date(since);
-    const isValidDate = !isNaN(sinceDate.getTime());
+    const isValidDate = !Number.isNaN(sinceDate.getTime());
 
     if (!isValidDate) {
       // If not a valid date, return all completed tasks
@@ -98,7 +98,7 @@ export class ChangelogService {
 
     return completedTasks.filter((task) => {
       const taskDate = new Date(task.completedAt);
-      return !isNaN(taskDate.getTime()) && taskDate >= sinceDate;
+      return !Number.isNaN(taskDate.getTime()) && taskDate >= sinceDate;
     });
   }
 
@@ -213,7 +213,6 @@ export class ChangelogService {
         return this.formatAsKeepAChangelog(entries, version);
       case "json":
         return this.formatAsJson(entries, version);
-      case "markdown":
       default:
         return this.formatAsMarkdown(entries, version);
     }
@@ -319,7 +318,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     try {
       // If since is a tag, get its date
       let sinceDate = opts.since;
-      if (sinceDate && sinceDate.startsWith("v")) {
+      if (sinceDate?.startsWith("v")) {
         const tagDate = await this.getTagDate(sinceDate);
         if (tagDate) {
           sinceDate = tagDate;
@@ -356,11 +355,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
       }
 
       // Read existing changelog and append
-      const existingContent = this.readExistingChangelog(opts.outputPath!);
+      const outputPath = opts.outputPath ?? "CHANGELOG.md";
+      const existingContent = this.readExistingChangelog(outputPath);
       const finalContent = this.appendToChangelog(newContent, existingContent, opts.format);
 
       // Write to file
-      this.writeChangelog(opts.outputPath!, finalContent);
+      this.writeChangelog(outputPath, finalContent);
 
       return {
         success: true,

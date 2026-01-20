@@ -1,8 +1,8 @@
 import type { Task } from "@kaibanboard/core";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import type { ChangelogEntry } from "../types/changelog";
-import { ChangelogService } from "./changelogService";
 
+// Mock child_process
 vi.mock("node:child_process", () => ({
   exec: vi.fn(),
 }));
@@ -17,6 +17,16 @@ vi.mock("node:fs", () => ({
   writeFileSync: vi.fn(),
   mkdirSync: vi.fn(),
 }));
+
+// Import after vi.mock
+import * as childProcess from "node:child_process";
+import * as fs from "node:fs";
+import { ChangelogService } from "./changelogService";
+
+const mockExec = childProcess.exec as unknown as Mock;
+const mockExistsSync = fs.existsSync as unknown as Mock;
+const mockReadFileSync = fs.readFileSync as unknown as Mock;
+const mockWriteFileSync = fs.writeFileSync as unknown as Mock;
 
 const createMockTask = (overrides: Partial<Task> = {}): Task => ({
   id: "task-123",
@@ -41,28 +51,15 @@ const createMockTask = (overrides: Partial<Task> = {}): Task => ({
 
 describe("ChangelogService", () => {
   let service: ChangelogService;
-  let mockExec: ReturnType<typeof vi.fn>;
-  let mockExistsSync: ReturnType<typeof vi.fn>;
-  let mockReadFileSync: ReturnType<typeof vi.fn>;
-  let mockWriteFileSync: ReturnType<typeof vi.fn>;
 
   const workspacePath = "/test/workspace";
 
   beforeEach(() => {
     service = new ChangelogService(workspacePath);
 
-    // biome-ignore lint/suspicious/noExplicitAny: test mock
-    const childProcess = require("node:child_process") as any;
-    mockExec = childProcess.exec;
     mockExec.mockReset();
-
-    // biome-ignore lint/suspicious/noExplicitAny: test mock
-    const fs = require("node:fs") as any;
-    mockExistsSync = fs.existsSync;
     mockExistsSync.mockReset();
-    mockReadFileSync = fs.readFileSync;
     mockReadFileSync.mockReset();
-    mockWriteFileSync = fs.writeFileSync;
     mockWriteFileSync.mockReset();
   });
 

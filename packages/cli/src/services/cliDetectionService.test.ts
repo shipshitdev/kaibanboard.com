@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
-import { CLIDetectionService } from "./cliDetectionService";
+import type { CLIDetectionResult } from "../types/cli.js";
+import { CLIDetectionService } from "./cliDetectionService.js";
 
 // Mock child_process
 vi.mock("node:child_process", () => ({
@@ -71,6 +72,16 @@ describe("CLIDetectionService", () => {
 
       expect(result.executablePath).toBe(customPath);
     });
+
+    it("should handle version detection failure gracefully", async () => {
+      mockExec.mockResolvedValueOnce({ stdout: "/usr/local/bin/claude\n" });
+      mockExec.mockRejectedValueOnce(new Error("version error"));
+
+      const result = await service.detectCLI("claude");
+
+      expect(result.available).toBe(true);
+      expect(result.version).toBeUndefined();
+    });
   });
 
   describe("detectAllCLIs", () => {
@@ -90,9 +101,9 @@ describe("CLIDetectionService", () => {
       const results = await service.detectAllCLIs();
 
       expect(results).toHaveLength(3);
-      const claude = results.find((r) => r.name === "claude");
-      const codex = results.find((r) => r.name === "codex");
-      const cursor = results.find((r) => r.name === "cursor");
+      const claude = results.find((r: CLIDetectionResult) => r.name === "claude");
+      const codex = results.find((r: CLIDetectionResult) => r.name === "codex");
+      const cursor = results.find((r: CLIDetectionResult) => r.name === "cursor");
 
       expect(claude?.available).toBe(true);
       expect(codex?.available).toBe(false);
@@ -141,7 +152,7 @@ describe("CLIDetectionService", () => {
       // Second detection with force refresh
       const results = await service.detectAllCLIs(true);
 
-      const claude = results.find((r) => r.name === "claude");
+      const claude = results.find((r: CLIDetectionResult) => r.name === "claude");
       expect(claude?.version).toBe("2.0.0");
     });
   });
@@ -222,45 +233,6 @@ describe("CLIDetectionService", () => {
     });
   });
 
-  describe("getCLIConfig", () => {
-    it("should return config with defaults", () => {
-      const mockVscodeConfig = {
-        get: vi.fn().mockImplementation((_key: string, defaultValue: unknown) => defaultValue),
-      };
-
-      const config = service.getCLIConfig("claude", mockVscodeConfig);
-
-      expect(config.name).toBe("claude");
-      expect(config.executablePath).toBe("claude");
-      expect(config.supportsRalphLoop).toBe(true);
-    });
-
-    it("should return config with custom values", () => {
-      const mockVscodeConfig = {
-        get: vi.fn().mockImplementation((key: string, defaultValue: unknown) => {
-          if (key === "claude.executablePath") return "/custom/claude";
-          if (key === "claude.additionalFlags") return "--verbose";
-          return defaultValue;
-        }),
-      };
-
-      const config = service.getCLIConfig("claude", mockVscodeConfig);
-
-      expect(config.executablePath).toBe("/custom/claude");
-      expect(config.additionalFlags).toBe("--verbose");
-    });
-
-    it("should mark codex as not supporting ralph-loop", () => {
-      const mockVscodeConfig = {
-        get: vi.fn().mockImplementation((_key: string, defaultValue: unknown) => defaultValue),
-      };
-
-      const config = service.getCLIConfig("codex", mockVscodeConfig);
-
-      expect(config.supportsRalphLoop).toBe(false);
-    });
-  });
-
   describe("clearCache", () => {
     it("should clear cached results", async () => {
       // First detection
@@ -276,6 +248,27 @@ describe("CLIDetectionService", () => {
 
       // Should have no cached results
       expect(service.getCachedResult("claude")).toBeUndefined();
+    });
+  });
+
+  describe("getCachedResult", () => {
+    it("should return cached result for detected CLI", async () => {
+      mockExec.mockResolvedValueOnce({ stdout: "/usr/bin/claude\n" });
+      mockExec.mockResolvedValueOnce({ stdout: "1.0.0\n" });
+      mockExec.mockRejectedValueOnce(new Error("not found"));
+      mockExec.mockRejectedValueOnce(new Error("not found"));
+
+      await service.detectAllCLIs();
+
+      const cached = service.getCachedResult("claude");
+      expect(cached).toBeDefined();
+      expect(cached?.name).toBe("claude");
+      expect(cached?.available).toBe(true);
+    });
+
+    it("should return undefined for never-detected CLI", () => {
+      const cached = service.getCachedResult("claude");
+      expect(cached).toBeUndefined();
     });
   });
 });

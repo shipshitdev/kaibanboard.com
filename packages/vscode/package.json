@@ -66,7 +66,7 @@
           "type": "number"
         },
         "kaiban.claude.promptTemplate": {
-          "default": "Read the task file at {taskFile} and implement it. The task contains a link to the PRD with full requirements. Update the task status to Done when complete.",
+          "default": "Read the task file at {taskFile} and implement it. The task contains a link to the PRD with full requirements. Update the task status to AI Review when complete.",
           "description": "Prompt template for Claude execution. Use {taskFile} for the task file path.",
           "type": "string"
         },
@@ -103,7 +103,7 @@
           "type": "string"
         },
         "kaiban.codex.promptTemplate": {
-          "default": "Read the task file at {taskFile} and implement it. The task contains a link to the PRD with full requirements. Update the task status to Done when complete.",
+          "default": "Read the task file at {taskFile} and implement it. The task contains a link to the PRD with full requirements. Update the task status to AI Review when complete.",
           "description": "Prompt template for Codex execution. Use {taskFile} for the task file path.",
           "type": "string"
         },
@@ -152,7 +152,7 @@
           "type": "string"
         },
         "kaiban.cursor.promptTemplate": {
-          "default": "Read the task file at {taskFile} and implement it. The task contains a link to the PRD with full requirements. Update the task status to Done when complete.",
+          "default": "Read the task file at {taskFile} and implement it. The task contains a link to the PRD with full requirements. Update the task status to AI Review when complete.",
           "description": "Prompt template for Cursor execution. Use {taskFile} for the task file path.",
           "type": "string"
         },
@@ -174,6 +174,11 @@
         "kaiban.merge.useAIAssist": {
           "default": true,
           "description": "Use AI assistance for merge conflict resolution.",
+          "type": "boolean"
+        },
+        "kaiban.pipeline.autoInterviewOnPlanning": {
+          "default": true,
+          "description": "Auto-trigger PRD interview when task moves to Planning status. Claude will interview you about requirements and validate/expand the PRD.",
           "type": "boolean"
         },
         "kaiban.pipeline.autoReviewOnAIReview": {

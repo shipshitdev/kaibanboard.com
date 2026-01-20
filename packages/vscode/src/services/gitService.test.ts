@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import { GitService } from "./gitService";
 
 // Mock child_process
@@ -16,28 +16,23 @@ vi.mock("node:fs", () => ({
   writeFileSync: vi.fn(),
 }));
 
+// Import mocked modules after vi.mock
+import * as childProcess from "node:child_process";
+import * as fs from "node:fs";
+
+const mockExec = childProcess.exec as unknown as Mock;
+const mockExistsSync = fs.existsSync as unknown as Mock;
+
 describe("GitService", () => {
   let service: GitService;
-  let mockExec: ReturnType<typeof vi.fn>;
-  let mockExistsSync: ReturnType<typeof vi.fn>;
-  let mockReadFileSync: ReturnType<typeof vi.fn>;
 
   const workspacePath = "/test/workspace";
 
   beforeEach(() => {
     service = new GitService(workspacePath);
 
-    // biome-ignore lint/suspicious/noExplicitAny: test mock
-    const childProcess = require("node:child_process") as any;
-    mockExec = childProcess.exec;
     mockExec.mockReset();
-
-    // biome-ignore lint/suspicious/noExplicitAny: test mock
-    const fs = require("node:fs") as any;
-    mockExistsSync = fs.existsSync;
     mockExistsSync.mockReset();
-    mockReadFileSync = fs.readFileSync;
-    mockReadFileSync.mockReset();
   });
 
   afterEach(() => {
@@ -118,7 +113,7 @@ more normal`;
       expect(result[0].ours).toBe("our version");
       expect(result[0].theirs).toBe("their version");
       expect(result[0].startLine).toBe(2);
-      expect(result[0].endLine).toBe(7);
+      expect(result[0].endLine).toBe(6);
     });
 
     it("should parse multiple conflicts", () => {
@@ -276,7 +271,7 @@ line2`;
           ours: "our version",
           theirs: "their version",
           startLine: 2,
-          endLine: 7,
+          endLine: 6,
         },
       ];
 

@@ -1658,6 +1658,56 @@ body.has-rate-limit-banner {
 }
 
 /* ============================================
+   Codex Quota Widget
+   ============================================ */
+.codex-quota-widget {
+  margin-left: 0;
+  margin-right: 8px;
+}
+
+.codex-quota-widget .quota-loading {
+  color: #a855f7;
+}
+
+.codex-label {
+  color: #a855f7;
+  font-weight: 700;
+}
+
+.codex-quota-widget .quota-bar-fill[data-status="good"] {
+  background: #a855f7;
+}
+
+.codex-quota-widget .quota-bar-fill[data-status="warning"] {
+  background: #eab308;
+}
+
+.codex-quota-widget .quota-bar-fill[data-status="critical"] {
+  background: #ef4444;
+}
+
+.codex-quota-widget .quota-value[data-status="good"] {
+  color: #a855f7;
+}
+
+.codex-quota-widget .quota-value[data-status="warning"] {
+  color: #eab308;
+}
+
+.codex-quota-widget .quota-value[data-status="critical"] {
+  color: #ef4444;
+}
+
+/* Codex review group - hidden by default, shown when data is available */
+.codex-review-group {
+  display: none;
+}
+
+.codex-review-group.visible {
+  display: flex;
+}
+
+/* ============================================
    PRD Edit Styles
    ============================================ */
 .prd-edit-container {

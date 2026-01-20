@@ -351,7 +351,7 @@ export class GitService {
       const endMarkerLine = conflict.endLine - 1;
 
       // Add lines from lastEndLine to the line before the conflict marker
-      for (let j = lastEndLine; j < startMarkerLine - 1; j++) {
+      for (let j = lastEndLine; j < startMarkerLine; j++) {
         result += `${lines[j]}\n`;
       }
 

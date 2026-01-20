@@ -177,6 +177,16 @@ Important: Create the directory if it doesn't exist. Use a kebab-case filename b
     const configOption = await vscode.window.showQuickPick(
       [
         {
+          label: "Configure Pipeline",
+          description: "Configure AI review pipeline settings (Claude → Codex Review → Done)",
+          option: "pipeline",
+        },
+        {
+          label: "Configure CLI Provider",
+          description: "Select default CLI for task execution (Claude, Codex, Cursor)",
+          option: "cli",
+        },
+        {
           label: "Configure Columns",
           description: "Select which columns to display on the Kanban board",
           option: "columns",
@@ -199,7 +209,169 @@ Important: Create the directory if it doesn't exist. Use a kebab-case filename b
 
     if (!configOption) return;
 
-    if (configOption.option === "columns") {
+    if (configOption.option === "pipeline") {
+      // Configure Pipeline settings
+      const pipelineConfig = vscode.workspace.getConfiguration("kaiban.pipeline");
+
+      const pipelineSetting = await vscode.window.showQuickPick(
+        [
+          {
+            label: "Enable/Disable Pipeline",
+            description: `Currently: ${pipelineConfig.get<boolean>("enabled", true) ? "Enabled" : "Disabled"}`,
+            setting: "enabled",
+          },
+          {
+            label: "Auto-Review on AI Review",
+            description: `Currently: ${pipelineConfig.get<boolean>("autoReviewOnAIReview", true) ? "Yes" : "No"}`,
+            setting: "autoReview",
+          },
+          {
+            label: "On Review Fail Action",
+            description: `Currently: ${pipelineConfig.get<string>("onReviewFail", "auto-retry")}`,
+            setting: "onFail",
+          },
+          {
+            label: "Max Retry Iterations",
+            description: `Currently: ${pipelineConfig.get<number>("maxRetryIterations", 2)}`,
+            setting: "maxRetries",
+          },
+        ],
+        { placeHolder: "Select pipeline setting to configure" }
+      );
+
+      if (!pipelineSetting) return;
+
+      if (pipelineSetting.setting === "enabled") {
+        const current = pipelineConfig.get<boolean>("enabled", true);
+        const choice = await vscode.window.showQuickPick(
+          [
+            {
+              label: "Enable",
+              description: "Tasks go through AI Review before Done",
+              picked: current,
+            },
+            { label: "Disable", description: "Tasks go directly to Done", picked: !current },
+          ],
+          { placeHolder: "Enable or disable the AI review pipeline" }
+        );
+        if (choice) {
+          await pipelineConfig.update(
+            "enabled",
+            choice.label === "Enable",
+            vscode.ConfigurationTarget.Workspace
+          );
+          vscode.window.showInformationMessage(
+            `Pipeline ${choice.label === "Enable" ? "enabled" : "disabled"}`
+          );
+        }
+      } else if (pipelineSetting.setting === "autoReview") {
+        const current = pipelineConfig.get<boolean>("autoReviewOnAIReview", true);
+        const choice = await vscode.window.showQuickPick(
+          [
+            {
+              label: "Yes",
+              description: "Auto-start Codex review when task enters AI Review",
+              picked: current,
+            },
+            { label: "No", description: "Manually trigger reviews", picked: !current },
+          ],
+          { placeHolder: "Auto-trigger review when task moves to AI Review?" }
+        );
+        if (choice) {
+          await pipelineConfig.update(
+            "autoReviewOnAIReview",
+            choice.label === "Yes",
+            vscode.ConfigurationTarget.Workspace
+          );
+          vscode.window.showInformationMessage(
+            `Auto-review ${choice.label === "Yes" ? "enabled" : "disabled"}`
+          );
+        }
+      } else if (pipelineSetting.setting === "onFail") {
+        const current = pipelineConfig.get<string>("onReviewFail", "auto-retry");
+        const choice = await vscode.window.showQuickPick(
+          [
+            {
+              label: "auto-retry",
+              description: "Re-run Claude with review feedback",
+              picked: current === "auto-retry",
+            },
+            {
+              label: "human-review",
+              description: "Move to Human Review column",
+              picked: current === "human-review",
+            },
+          ],
+          { placeHolder: "What to do when AI review fails?" }
+        );
+        if (choice) {
+          await pipelineConfig.update(
+            "onReviewFail",
+            choice.label,
+            vscode.ConfigurationTarget.Workspace
+          );
+          vscode.window.showInformationMessage(`On review fail: ${choice.label}`);
+        }
+      } else if (pipelineSetting.setting === "maxRetries") {
+        const current = pipelineConfig.get<number>("maxRetryIterations", 2);
+        const input = await vscode.window.showInputBox({
+          prompt: "Maximum retry iterations before moving to Human Review",
+          value: String(current),
+          validateInput: (v) => {
+            const num = parseInt(v, 10);
+            if (Number.isNaN(num) || num < 1 || num > 5) return "Enter a number between 1 and 5";
+            return null;
+          },
+        });
+        if (input) {
+          await pipelineConfig.update(
+            "maxRetryIterations",
+            parseInt(input, 10),
+            vscode.ConfigurationTarget.Workspace
+          );
+          vscode.window.showInformationMessage(`Max retries set to ${input}`);
+        }
+      }
+    } else if (configOption.option === "cli") {
+      // Configure CLI Provider
+      const cliConfig = vscode.workspace.getConfiguration("kaiban.cli");
+      const current = cliConfig.get<string>("defaultProvider", "auto");
+
+      const choice = await vscode.window.showQuickPick(
+        [
+          {
+            label: "auto",
+            description: "Auto-select first available (Claude > Codex > Cursor)",
+            picked: current === "auto",
+          },
+          {
+            label: "claude",
+            description: "Use Claude CLI for task execution",
+            picked: current === "claude",
+          },
+          {
+            label: "codex",
+            description: "Use Codex CLI for task execution",
+            picked: current === "codex",
+          },
+          {
+            label: "cursor",
+            description: "Use Cursor CLI for task execution",
+            picked: current === "cursor",
+          },
+        ],
+        { placeHolder: "Select default CLI provider for task execution" }
+      );
+
+      if (choice) {
+        await cliConfig.update(
+          "defaultProvider",
+          choice.label,
+          vscode.ConfigurationTarget.Workspace
+        );
+        vscode.window.showInformationMessage(`Default CLI provider set to: ${choice.label}`);
+      }
+    } else if (configOption.option === "columns") {
       // Configure columns
       const currentColumns = columnsConfig.get<string[]>("enabled", [
         "Backlog",

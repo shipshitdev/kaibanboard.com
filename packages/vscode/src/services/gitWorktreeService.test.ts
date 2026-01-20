@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import { GitWorktreeService } from "./gitWorktreeService";
 
 // Mock child_process
@@ -15,10 +15,15 @@ vi.mock("node:fs", () => ({
   mkdirSync: vi.fn(),
 }));
 
+// Import mocked modules after vi.mock
+import * as childProcess from "node:child_process";
+import * as fs from "node:fs";
+
+const mockExec = childProcess.exec as unknown as Mock;
+const mockExistsSync = fs.existsSync as unknown as Mock;
+
 describe("GitWorktreeService", () => {
   let service: GitWorktreeService;
-  let mockExec: ReturnType<typeof vi.fn>;
-  let mockExistsSync: ReturnType<typeof vi.fn>;
 
   const workspacePath = "/test/workspace";
 
@@ -31,14 +36,7 @@ describe("GitWorktreeService", () => {
       autoCleanup: true,
     });
 
-    // biome-ignore lint/suspicious/noExplicitAny: test mock
-    const childProcess = require("node:child_process") as any;
-    mockExec = childProcess.exec;
     mockExec.mockReset();
-
-    // biome-ignore lint/suspicious/noExplicitAny: test mock
-    const fs = require("node:fs") as any;
-    mockExistsSync = fs.existsSync;
     mockExistsSync.mockReset();
   });
 

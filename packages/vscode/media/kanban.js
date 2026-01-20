@@ -7,14 +7,139 @@ const originalTaskOrder = new Map(); // Store original order of tasks per column
 // Claude execution state
 let currentPrdTaskId = null;
 const runningTasks = new Set(); // Track task IDs that are currently executing
+const reviewingTasks = new Set(); // Track task IDs that are currently being reviewed
 
 // Claude quota functions
-function _refreshClaudeQuota() {
-  const refreshBtn = document.querySelector(".quota-refresh-btn");
+// biome-ignore lint/correctness/noUnusedVariables: Called from HTML onclick
+function refreshClaudeQuota() {
+  const refreshBtn = document.querySelector("#quotaWidget .quota-refresh-btn");
   if (refreshBtn) {
     refreshBtn.classList.add("refreshing");
   }
   vscode.postMessage({ command: "refreshClaudeQuota" });
+}
+
+// Codex quota functions
+// biome-ignore lint/correctness/noUnusedVariables: Called from HTML onclick
+function refreshCodexQuota() {
+  const refreshBtn = document.querySelector("#codexQuotaWidget .quota-refresh-btn");
+  if (refreshBtn) {
+    refreshBtn.classList.add("refreshing");
+  }
+  vscode.postMessage({ command: "refreshCodexQuota" });
+}
+
+function updateCodexQuotaUI(data) {
+  const loading = document.getElementById("codexQuotaLoading");
+  const content = document.getElementById("codexQuotaContent");
+  const error = document.getElementById("codexQuotaError");
+  const refreshBtn = document.querySelector("#codexQuotaWidget .quota-refresh-btn");
+
+  // Remove refreshing state
+  if (refreshBtn) {
+    refreshBtn.classList.remove("refreshing");
+  }
+
+  if (!data.isAvailable) {
+    // Codex not available - hide widget entirely
+    const widget = document.getElementById("codexQuotaWidget");
+    if (widget) widget.style.display = "none";
+    return;
+  }
+
+  // Show widget
+  const widget = document.getElementById("codexQuotaWidget");
+  if (widget) widget.style.display = "flex";
+
+  if (data.error && !data.usage) {
+    // Error state without data
+    if (loading) loading.style.display = "none";
+    if (content) content.style.display = "none";
+    if (error) {
+      error.style.display = "flex";
+      document.getElementById("codexQuotaErrorText").textContent = data.error;
+    }
+    return;
+  }
+
+  if (data.usage) {
+    // Show data
+    if (loading) loading.style.display = "none";
+    if (error) error.style.display = "none";
+    if (content) content.style.display = "flex";
+
+    // Update 5-hour session bar (utilization is already a percentage 0-100)
+    const fill5h = document.getElementById("codexQuota5h");
+    const value5h = document.getElementById("codexQuota5hValue");
+    if (data.usage.sessionLimit) {
+      const percent5h = Math.round(data.usage.sessionLimit.utilization);
+      if (fill5h) {
+        fill5h.style.width = `${Math.min(percent5h, 100)}%`;
+        fill5h.dataset.status = data.usage.sessionLimit.status;
+      }
+      if (value5h) {
+        value5h.textContent = `${percent5h}%`;
+        value5h.dataset.status = data.usage.sessionLimit.status;
+      }
+    } else {
+      if (fill5h) fill5h.style.width = "0%";
+      if (value5h) value5h.textContent = "N/A";
+    }
+
+    // Update 7-day bar
+    const fill7d = document.getElementById("codexQuota7d");
+    const value7d = document.getElementById("codexQuota7dValue");
+    if (data.usage.weeklyLimit) {
+      const percent7d = Math.round(data.usage.weeklyLimit.utilization);
+      if (fill7d) {
+        fill7d.style.width = `${Math.min(percent7d, 100)}%`;
+        fill7d.dataset.status = data.usage.weeklyLimit.status;
+      }
+      if (value7d) {
+        value7d.textContent = `${percent7d}%`;
+        value7d.dataset.status = data.usage.weeklyLimit.status;
+      }
+    } else {
+      if (fill7d) fill7d.style.width = "0%";
+      if (value7d) value7d.textContent = "N/A";
+    }
+
+    // Update Code Review bar if available
+    const reviewGroup = document.getElementById("codexReviewGroup");
+    if (data.usage.codeReviewLimit && reviewGroup) {
+      reviewGroup.classList.add("visible");
+      const fillReview = document.getElementById("codexQuotaReview");
+      const valueReview = document.getElementById("codexQuotaReviewValue");
+      const percentReview = Math.round(data.usage.codeReviewLimit.utilization);
+      if (fillReview) {
+        fillReview.style.width = `${Math.min(percentReview, 100)}%`;
+        fillReview.dataset.status = data.usage.codeReviewLimit.status;
+      }
+      if (valueReview) {
+        valueReview.textContent = `${percentReview}%`;
+        valueReview.dataset.status = data.usage.codeReviewLimit.status;
+      }
+    } else if (reviewGroup) {
+      reviewGroup.classList.remove("visible");
+    }
+
+    // Update tooltips with reset times
+    const quotaPrimary = document.querySelector("#codexQuotaWidget .quota-primary");
+    if (quotaPrimary) {
+      let tooltip = `Codex CLI Usage (${data.usage.planType})`;
+      if (data.usage.sessionLimit) {
+        tooltip += `\n5h: ${Math.round(data.usage.sessionLimit.utilization)}% (resets ${data.usage.sessionLimit.resetTimeFormatted})`;
+      }
+      if (data.usage.weeklyLimit) {
+        tooltip += `\n7d: ${Math.round(data.usage.weeklyLimit.utilization)}% (resets ${data.usage.weeklyLimit.resetTimeFormatted})`;
+      }
+      if (data.usage.codeReviewLimit) {
+        tooltip += `\nReview: ${Math.round(data.usage.codeReviewLimit.utilization)}% (resets ${data.usage.codeReviewLimit.resetTimeFormatted})`;
+      }
+      tooltip += "\n\nHover to see all limits";
+      quotaPrimary.title = tooltip;
+    }
+  }
 }
 
 function updateQuotaUI(data) {
@@ -246,7 +371,8 @@ function toggleExecution(taskId) {
   }
 }
 
-function _executePRD() {
+// biome-ignore lint/correctness/noUnusedVariables: Called from HTML onclick
+function executePRD() {
   if (currentPrdTaskId) {
     toggleExecution(currentPrdTaskId);
   }
@@ -322,6 +448,73 @@ function clearTaskProgress(taskId) {
   }
 }
 
+// Update review badge for a task in AI Review column
+function updateReviewBadge(taskId, status, rating) {
+  const card = document.querySelector(`[data-task-id="${taskId}"]`);
+  if (!card) return;
+
+  // Find existing review badge or create one
+  let badge = card.querySelector(".review-badge");
+
+  // Determine badge content based on status
+  let badgeClass = "pending";
+  let badgeText = "⏳ Pending";
+  let dataStatus = "pending";
+
+  switch (status) {
+    case "in_progress":
+      badgeClass = "reviewing";
+      badgeText = "⟳ Reviewing";
+      dataStatus = "in_progress";
+      break;
+    case "completed":
+      if (rating === "pass") {
+        badgeClass = "passed";
+        badgeText = "✓ Passed";
+        dataStatus = "passed";
+      } else if (rating === "critical_issues") {
+        badgeClass = "failed";
+        badgeText = "✗ Issues";
+        dataStatus = "critical_issues";
+      } else {
+        badgeClass = "needs-work";
+        badgeText = "⚠ Needs Work";
+        dataStatus = "needs_work";
+      }
+      break;
+    case "failed":
+      badgeClass = "failed";
+      badgeText = "✗ Failed";
+      dataStatus = "failed";
+      break;
+  }
+
+  if (badge) {
+    // Update existing badge
+    badge.className = `badge review-badge ${badgeClass}`;
+    badge.textContent = badgeText;
+    badge.dataset.reviewStatus = dataStatus;
+  } else {
+    // Create new badge if we're in AI Review column
+    if (card.dataset.status === "AI Review") {
+      const taskMeta = card.querySelector(".task-meta");
+      if (taskMeta) {
+        badge = document.createElement("span");
+        badge.className = `badge review-badge ${badgeClass}`;
+        badge.textContent = badgeText;
+        badge.dataset.reviewStatus = dataStatus;
+        taskMeta.appendChild(badge);
+      }
+    }
+  }
+}
+
+// Update task running state considering both terminal execution and review
+function updateCombinedRunningState(taskId) {
+  const isRunning = runningTasks.has(taskId) || reviewingTasks.has(taskId);
+  updateTaskRunningState(taskId, isRunning);
+}
+
 // Confirmation modal for stopping execution
 const stopExecutionCallbacks = { onConfirm: null, onCancel: null };
 
@@ -359,7 +552,8 @@ function hideStopExecutionModal() {
   stopExecutionCallbacks.onCancel = null;
 }
 
-function _confirmStopExecution() {
+// biome-ignore lint/correctness/noUnusedVariables: Called from HTML onclick
+function confirmStopExecution() {
   if (stopExecutionCallbacks.onConfirm) {
     hideStopExecutionModal();
     stopExecutionCallbacks.onConfirm();
@@ -378,7 +572,8 @@ let isPrdEditMode = false;
 let currentPrdPath = "";
 
 // PRD edit functions
-function _togglePrdEditMode() {
+// biome-ignore lint/correctness/noUnusedVariables: Called from HTML onclick
+function togglePrdEditMode() {
   const panel = document.getElementById("prdPanel");
   const prdPath = panel ? panel.dataset.prdPath : "";
 
@@ -455,7 +650,8 @@ function cancelPrdEdit() {
   if (saveBtn) saveBtn.style.display = "none";
 }
 
-function _savePrdEdit() {
+// biome-ignore lint/correctness/noUnusedVariables: Called from HTML onclick
+function savePrdEdit() {
   if (!currentPrdPath) return;
 
   const textarea = document.getElementById("prdEditTextarea");
@@ -811,7 +1007,8 @@ function showPRDPreview(prdPath) {
 }
 
 // Close PRD preview
-function _closePRD() {
+// biome-ignore lint/correctness/noUnusedVariables: Called from HTML onclick
+function closePRD() {
   const board = document.getElementById("kanbanBoard");
   const panel = document.getElementById("prdPanel");
   const content = document.getElementById("prdContent");
@@ -851,7 +1048,8 @@ function _closePRD() {
 }
 
 // Create PRD for current task
-function _createPRD() {
+// biome-ignore lint/correctness/noUnusedVariables: Called from HTML onclick
+function createPRD() {
   if (!currentPrdTaskId) return;
   const panel = document.getElementById("prdPanel");
   const prdPath = panel ? panel.dataset.prdPath : "";
@@ -864,7 +1062,8 @@ function _createPRD() {
 }
 
 // Edit current PRD
-function _editPRD() {
+// biome-ignore lint/correctness/noUnusedVariables: Called from HTML onclick
+function editPRD() {
   const panel = document.getElementById("prdPanel");
   const prdPath = panel ? panel.dataset.prdPath : "";
 
@@ -902,7 +1101,8 @@ function showTerminalPanel() {
   });
 }
 
-function _closeTerminal() {
+// biome-ignore lint/correctness/noUnusedVariables: Called from HTML onclick
+function closeTerminal() {
   const terminalPanel = document.getElementById("terminalPanel");
   const board = document.getElementById("kanbanBoard");
 
@@ -921,7 +1121,8 @@ function _closeTerminal() {
   }, 300);
 }
 
-function _toggleTerminal() {
+// biome-ignore lint/correctness/noUnusedVariables: Called from HTML onclick
+function toggleTerminal() {
   const terminalPanel = document.getElementById("terminalPanel");
   const board = document.getElementById("kanbanBoard");
   const toggleBtn = document.getElementById("terminalToggleBtn");
@@ -948,7 +1149,8 @@ function _toggleTerminal() {
   }
 }
 
-function _clearTerminal() {
+// biome-ignore lint/correctness/noUnusedVariables: Called from HTML onclick
+function clearTerminal() {
   const terminalContent = document.getElementById("terminalContent");
   if (terminalContent) {
     terminalContent.innerHTML = '<div class="terminal-output-line info">Terminal cleared.</div>';
@@ -994,8 +1196,15 @@ function refresh() {
   vscode.postMessage({ command: "refresh" });
 }
 
+// Initialize project structure handler
+// biome-ignore lint/correctness/noUnusedVariables: Called from HTML onclick
+function initializeProject() {
+  vscode.postMessage({ command: "initializeProject" });
+}
+
 // Create task handler
-function _createTask() {
+// biome-ignore lint/correctness/noUnusedVariables: Called from HTML onclick
+function createTask() {
   vscode.postMessage({ command: "createTask" });
 }
 
@@ -1003,7 +1212,8 @@ function _createTask() {
 let isBatchRunning = false;
 let batchProgress = { current: 0, total: 0, completed: 0, skipped: 0 };
 
-function _toggleBatchExecution() {
+// biome-ignore lint/correctness/noUnusedVariables: Called from HTML onclick
+function toggleBatchExecution() {
   if (isBatchRunning) {
     cancelBatchExecution();
   } else {
@@ -1104,18 +1314,21 @@ function updateBatchProgress(current, total, completed, skipped) {
 // ============ End Batch Execution Functions ============
 
 // Open settings handler (PRD path config)
-function _openSettings() {
+// biome-ignore lint/correctness/noUnusedVariables: Called from HTML onclick
+function openSettings() {
   closeSettingsPanel();
   vscode.postMessage({ command: "openSettings" });
 }
 
 // Open VS Code extension settings
-function _openExtensionSettings() {
+// biome-ignore lint/correctness/noUnusedVariables: Called from HTML onclick
+function openExtensionSettings() {
   vscode.postMessage({ command: "openExtensionSettings" });
 }
 
 // Settings panel toggle
-function _toggleSettingsPanel(event) {
+// biome-ignore lint/correctness/noUnusedVariables: Called from HTML onclick
+function toggleSettingsPanel(event) {
   event.stopPropagation();
   const panel = document.getElementById("settingsPanel");
   if (panel) {
@@ -1147,7 +1360,8 @@ document.addEventListener("click", (e) => {
 });
 
 // Toggle column visibility instantly
-function _toggleColumn(columnName, isVisible) {
+// biome-ignore lint/correctness/noUnusedVariables: Called from HTML onclick
+function toggleColumn(columnName, isVisible) {
   const column = document.querySelector(`.column[data-status="${columnName}"]`);
   if (column) {
     if (isVisible) {
@@ -1164,6 +1378,13 @@ function _toggleColumn(columnName, isVisible) {
       enabledColumns.push(checkbox.dataset.column);
     }
   });
+
+  // Update grid to match visible column count
+  const board = document.getElementById("kanbanBoard");
+  if (board) {
+    board.style.gridTemplateColumns = `repeat(${enabledColumns.length}, minmax(200px, 1fr))`;
+  }
+
   vscode.postMessage({
     command: "saveColumnSettings",
     columns: enabledColumns,
@@ -1171,7 +1392,8 @@ function _toggleColumn(columnName, isVisible) {
 }
 
 // Sort change handler
-function _onSortChange() {
+// biome-ignore lint/correctness/noUnusedVariables: Called from HTML onclick
+function onSortChange() {
   const sortSelect = document.getElementById("sortSelect");
   if (!(sortSelect instanceof HTMLSelectElement)) return;
 
@@ -1549,6 +1771,87 @@ window.addEventListener("message", (event) => {
       break;
     }
 
+    // ============ Review Message Handlers ============
+    case "reviewStarted": {
+      const taskId = message.data?.taskId || message.taskId;
+      reviewingTasks.add(taskId);
+      updateReviewBadge(taskId, "in_progress");
+      updateCombinedRunningState(taskId);
+      appendToTerminal(`🔍 Starting AI review for task: ${taskId}`, "info");
+      break;
+    }
+
+    case "reviewComplete": {
+      const taskId = message.data?.taskId || message.taskId;
+      const result = message.data?.result || message.result;
+      reviewingTasks.delete(taskId);
+      updateReviewBadge(taskId, "completed", result?.overallRating);
+      updateCombinedRunningState(taskId);
+      const emoji =
+        result?.overallRating === "pass"
+          ? "✅"
+          : result?.overallRating === "needs_work"
+            ? "⚠️"
+            : "❌";
+      appendToTerminal(
+        `${emoji} Review complete: ${result?.overallRating || "unknown"} (${result?.findings?.length || 0} findings)`,
+        result?.overallRating === "pass" ? "success" : "info"
+      );
+      break;
+    }
+
+    case "reviewFailed": {
+      const taskId = message.data?.taskId || message.taskId;
+      const error = message.data?.error || message.error;
+      reviewingTasks.delete(taskId);
+      updateReviewBadge(taskId, "failed");
+      updateCombinedRunningState(taskId);
+      appendToTerminal(`❌ Review failed: ${error || "Unknown error"}`, "error");
+      break;
+    }
+
+    case "reviewStatusUpdate": {
+      const taskId = message.data?.taskId || message.taskId;
+      const state = message.data?.state;
+      if (state) {
+        if (state.status === "in_progress") {
+          reviewingTasks.add(taskId);
+        } else {
+          reviewingTasks.delete(taskId);
+        }
+        updateReviewBadge(taskId, state.status, state.result?.overallRating);
+        updateCombinedRunningState(taskId);
+      }
+      break;
+    }
+
+    case "taskStatusChanged": {
+      const { taskLabel, newStatus, emoji } = message;
+      const statusUpper = newStatus.toUpperCase().replace(/ /g, "_");
+      showTerminalPanel();
+      appendToTerminal(`${emoji} Task status: ${statusUpper} → "${taskLabel}"`, "info");
+      break;
+    }
+
+    case "planningStarted": {
+      const taskId = message.taskId;
+      const card = document.querySelector(`[data-task-id="${taskId}"]`);
+      const taskLabel = card ? card.dataset.label : taskId;
+      showTerminalPanel();
+      appendToTerminal(`📝 Starting PRD planning for "${taskLabel}"...`, "info");
+      break;
+    }
+
+    case "planningFailed": {
+      const taskId = message.taskId;
+      const error = message.error || "Unknown error";
+      const card = document.querySelector(`[data-task-id="${taskId}"]`);
+      const taskLabel = card ? card.dataset.label : taskId;
+      appendToTerminal(`❌ PRD planning failed for "${taskLabel}": ${error}`, "error");
+      break;
+    }
+    // ============ End Review Message Handlers ============
+
     // ============ Batch Execution Message Handlers ============
     case "batchExecutionStarted": {
       updateBatchUI(true);
@@ -1671,6 +1974,39 @@ window.addEventListener("message", (event) => {
     }
     // ============ End Claude Quota Message Handlers ============
 
+    // ============ Codex Quota Message Handlers ============
+    case "codexQuotaLoading": {
+      const loading = document.getElementById("codexQuotaLoading");
+      const content = document.getElementById("codexQuotaContent");
+      const error = document.getElementById("codexQuotaError");
+      if (loading) loading.style.display = "flex";
+      if (content) content.style.display = "none";
+      if (error) error.style.display = "none";
+      break;
+    }
+
+    case "codexQuotaUpdate": {
+      updateCodexQuotaUI(message.data);
+      break;
+    }
+
+    case "codexQuotaError": {
+      const loading = document.getElementById("codexQuotaLoading");
+      const content = document.getElementById("codexQuotaContent");
+      const error = document.getElementById("codexQuotaError");
+      const refreshBtn = document.querySelector("#codexQuotaWidget .quota-refresh-btn");
+      if (refreshBtn) refreshBtn.classList.remove("refreshing");
+      if (loading) loading.style.display = "none";
+      if (content) content.style.display = "none";
+      if (error) {
+        error.style.display = "flex";
+        document.getElementById("codexQuotaErrorText").textContent =
+          message.error || "Failed to fetch Codex quota";
+      }
+      break;
+    }
+    // ============ End Codex Quota Message Handlers ============
+
     // ============ PRD Edit Message Handlers ============
     case "prdRawContent": {
       if (message.content !== undefined) {
@@ -1706,4 +2042,5 @@ window.addEventListener("message", (event) => {
 
 // Request initial data now that message listener is ready
 vscode.postMessage({ command: "getClaudeQuota" });
+vscode.postMessage({ command: "getCodexQuota" });
 vscode.postMessage({ command: "getCLIStatus" });
